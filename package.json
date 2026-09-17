@@ -1,7 +1,7 @@
 {
   "name": "react-native-native-debugger",
-  "version": "0.3.0",
-  "description": "Dev-only native log and error bridge for React Native, with optional source-patch integrations that mirror upstream native logs and surface real caught failures.",
+  "version": "0.4.0",
+  "description": "Dev-only native debugging toolkit for React Native with native log/error bridging and host-side Android/iOS log streaming.",
   "main": "index.js",
   "types": "index.d.ts",
   "react-native": "index.js",
@@ -13,6 +13,7 @@
     "logs",
     "errors",
     "logcat",
+    "ios",
     "rnfs",
     "blob-util",
     "background-downloader"
@@ -39,7 +40,8 @@
     "test": "node --test test/*.test.js",
     "doctor": "node cli/index.js doctor",
     "patch": "node cli/index.js patch",
-    "unpatch": "node cli/index.js unpatch"
+    "unpatch": "node cli/index.js unpatch",
+    "logs": "node cli/index.js logs"
   },
   "peerDependencies": {
     "react": "*",
