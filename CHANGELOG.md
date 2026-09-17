@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0-react.1
+
+- Kept the dashboard ring buffer capped at 5000 records while making retention severity-aware.
+- Added protected retention floors for `fatal` (250), `error` (1000), and `warn` (750) records so high-volume `debug`, `info`, `default`, `verbose`, or unknown logs cannot immediately evict important historical failures.
+- Eviction now prefers the oldest record from the lowest-retention severity class first, while still enforcing the global 5000-record memory bound.
+- Filtering semantics remain `retained buffer -> filters -> visible limit`, so asking for the latest 100 errors remains stable unless the error history itself exceeds its protected retention window.
+- Added regression tests covering global buffer bounds and protected error/warn/fatal history under heavy low-severity log traffic.
+
 ## 0.5.4
 
 - Added a generic Process filter separate from package/source, service, level, search, and visible limit.
