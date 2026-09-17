@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.2
+
+- Dashboard level, package/source, and service facets are now generated dynamically from the full in-memory buffer instead of fixed lists.
+- Filter semantics are explicitly `buffer -> filters -> visible limit`, so selecting a package and `100` shows the newest 100 matching records for that package.
+- Added playback/render speed controls: realtime, 250 ms, 500 ms, 1 second, and 2 seconds. Collection continues at full speed; only UI flushing is throttled.
+- Pause now freezes the visible/export snapshot while incoming logs continue accumulating in a bounded pending queue for resume.
+- Export actions are disabled while live/play mode is active and enabled only when paused.
+- Added per-row selection checkboxes, selected-count tracking, and JSON export for selected records.
+- Existing filtered JSON/NDJSON exports continue to respect the active filters and visible-record limit.
+- Added regression tests for dynamic facets, playback controls, selection/export behavior, filter-before-limit semantics, and generated inline-script syntax.
+
 ## 0.5.0
 
 - Reworked the native logs dashboard into a newer, denser inspector UI with newest records shown first.
