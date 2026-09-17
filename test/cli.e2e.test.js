@@ -24,30 +24,37 @@ test('CLI discovers, patches, reports, and unpatches an optional package', () =>
 package com.rnfs;
 class Downloader {
  void x() {
-      connection = (HttpURLConnection)param.src.openConnection();
-      int statusCode = connection.getResponseCode();
-      long lengthOfFile = getContentLength(connection);
-          total += count;
-        res.bytesWritten = total;
+                  Log.d("Downloader", "EMIT: " + String.valueOf(progress) + ", TOTAL:" + String.valueOf(total));
         } catch (Exception ex) {
   }
 }`);
   write(pkg, 'Downloader.m', `
 - (void)x {
-  NSURL* url = [NSURL URLWithString:_params.fromUrl];
-}
-- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didWriteData:(int64_t)bytesWritten totalBytesWritten:(int64_t)totalBytesWritten totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite
-{
-  NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)downloadTask.response;
-}
-- (void)y {
-  return _params.completeCallback(_statusCode, _bytesWritten);
+            NSLog(@"---Progress callback EMIT--- %u", [progress unsignedIntValue]);
+    NSLog(@"RNFS download: unable to move tempfile to destination. %@, %@", error, error.userInfo);
+    NSLog(@"RNFS download: didCompleteWithError %@, %@", error, error.userInfo);
+}`);
+
+  write(pkg, 'android/src/main/java/com/rnfs/Uploader.java', `
+package com.rnfs;
+class Uploader {
+ void x() {
+                try {
+                  upload();
+                } catch (Exception e) {
+                  res = null;
+                }
+ }
+}`);
+  write(pkg, 'Uploader.m', `
+- (void)uploadFiles {
+      NSLog(@"Failed to open target file at path: %@", filepath);
 }
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error
 {
-  if (error) {
-  }
-}`);
+  if(error != nil) { return _params.errorCallback(error); }
+}
+`);
 
   const doctorBefore = JSON.parse(execFileSync(process.execPath, [cli, 'doctor', '--root', project, '--json'], { encoding: 'utf8' }));
   const rnfsBefore = doctorBefore.find((row) => row.key === 'rnfs');
@@ -80,31 +87,39 @@ test('CLI discovers, patches, and unpatches scoped @dr.pogodin/react-native-fs',
 package com.drpogodin.reactnativefs
 class Downloader {
   fun x() {
-    try {
-            connection = param!!.src!!.openConnection() as HttpURLConnection
-            var statusCode = connection.responseCode
-            var lengthOfFile = getContentLength(connection)
-                    total += count.toLong()
-                res.bytesWritten = total
+                    Log.d("Downloader", "File compress with GZIP. Decompress...")
+                                    Log.d("Downloader", "EMIT: $progress, TOTAL:$total")
             } catch (ex: Exception) {
-    }
   }
 }`);
   write(pkg, 'ios/Downloader.mm', `
 - (void)x {
-  NSURL* url = [NSURL URLWithString:_params.fromUrl];
-}
-- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didWriteData:(int64_t)bytesWritten totalBytesWritten:(int64_t)totalBytesWritten totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite
-{
-}
-- (void)y {
-  return _params.completeCallback(_statusCode, _bytesWritten, httpResponse.allHeaderFields, responseBodyString);
+            NSLog(@"---Progress callback EMIT--- %u", [progress unsignedIntValue]);
+    NSLog(@"RNFS download: unable to move tempfile to destination. %@, %@", error, error.userInfo);
+    NSLog(@"RNFS download: didCompleteWithError %@, %@", error, error.userInfo);
+}`);
+
+  write(pkg, 'android/src/main/java/com/drpogodin/reactnativefs/Uploader.kt', `
+package com.drpogodin.reactnativefs
+class Uploader {
+  fun x() {
+        try {
+          upload()
+        } catch (e: Exception) {
+          e.printStackTrace()
+          throw e
+        }
+  }
+}`);
+  write(pkg, 'ios/Uploader.mm', `
+- (void)uploadFiles {
+      NSLog(@"Failed to open target file at path: %@", filepath);
 }
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error
 {
-  if (error) {
-  }
-}`);
+  if(error != nil) { return _params.errorCallback(error); }
+}
+`);
 
   const doctor = JSON.parse(execFileSync(process.execPath, [cli, 'doctor', '--root', project, '--json'], { encoding: 'utf8' }));
   const row = doctor.find((item) => item.key === 'drPogodinRnfs');
