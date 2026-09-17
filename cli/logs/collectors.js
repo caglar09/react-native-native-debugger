@@ -36,6 +36,61 @@ function getAndroidPid(appId, serial) {
   return /^\d+$/.test(first) ? first : null;
 }
 
+function normalizeProcesses(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    if (!item || !item.name) return false;
+    const key = `${item.pid || ''}:${item.name}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => String(a.name).localeCompare(String(b.name)) || Number(a.pid || 0) - Number(b.pid || 0));
+}
+
+function listAndroidProcesses(serial) {
+  const args = [];
+  if (serial) args.push('-s', serial);
+  args.push('shell', 'ps', '-A', '-o', 'PID,NAME');
+  let result = spawnSync('adb', args, { encoding: 'utf8' });
+  if (result.status !== 0) {
+    const fallback = [];
+    if (serial) fallback.push('-s', serial);
+    fallback.push('shell', 'ps', '-A');
+    result = spawnSync('adb', fallback, { encoding: 'utf8' });
+  }
+  if (result.status !== 0) return [];
+  const rows = String(result.stdout || '').split(/\r?\n/).slice(1);
+  const items = [];
+  for (const row of rows) {
+    const trimmed = row.trim();
+    if (!trimmed) continue;
+    const columns = trimmed.split(/\s+/);
+    let pid = Number(columns[0]);
+    let name = columns.slice(1).join(' ');
+    if (!Number.isFinite(pid)) {
+      const pidIndex = columns.findIndex((value) => /^\d+$/.test(value));
+      if (pidIndex < 0) continue;
+      pid = Number(columns[pidIndex]);
+      name = columns[columns.length - 1];
+    }
+    items.push({ pid, name: path.basename(name || '') });
+  }
+  return normalizeProcesses(items);
+}
+
+function listIosSimulatorProcesses(target = 'booted') {
+  const result = spawnSync('xcrun', ['simctl', 'spawn', target, 'ps', '-axo', 'pid=,comm='], { encoding: 'utf8' });
+  if (result.status !== 0) return [];
+  const items = [];
+  for (const row of String(result.stdout || '').split(/\r?\n/)) {
+    const match = row.match(/^\s*(\d+)\s+(.+?)\s*$/);
+    if (!match) continue;
+    const command = match[2];
+    items.push({ pid: Number(match[1]), name: path.basename(command), command });
+  }
+  return normalizeProcesses(items);
+}
+
 function lineReader(child, onLine, onError) {
   const stdout = readline.createInterface({ input: child.stdout });
   stdout.on('line', onLine);
@@ -50,7 +105,9 @@ function startAndroidCollector(options) {
   const args = [];
   if (options.device) args.push('-s', options.device);
   args.push('logcat', '-v', 'threadtime');
-  const pid = getAndroidPid(appId, options.device);
+  // Only constrain logcat when the user explicitly requested an app. Auto-detected app ids
+  // remain metadata so the dashboard can still inspect related system processes.
+  const pid = options.app ? getAndroidPid(options.app, options.device) : null;
   if (pid) args.push(`--pid=${pid}`);
 
   const child = spawn('adb', args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -61,6 +118,7 @@ function startAndroidCollector(options) {
   child.on('exit', (code, signal) => options.onExit({ platform: 'android', code, signal }));
   return {
     platform: 'android', app: appId, pid, command: `adb ${args.join(' ')}`,
+    listProcesses() { return listAndroidProcesses(options.device); },
     stop() { closeReader(); if (!child.killed) child.kill('SIGTERM'); }
   };
 }
@@ -78,6 +136,7 @@ function startIosSimulatorCollector(options) {
   child.on('exit', (code, signal) => options.onExit({ platform: 'ios', code, signal }));
   return {
     platform: 'ios', target, command: `xcrun ${args.join(' ')}`,
+    listProcesses() { return listIosSimulatorProcesses(target); },
     stop() { closeReader(); if (!child.killed) child.kill('SIGTERM'); }
   };
 }
@@ -96,8 +155,19 @@ function startIosDeviceCollector(options) {
   child.on('exit', (code, signal) => options.onExit({ platform: 'ios', code, signal }));
   return {
     platform: 'ios-device', command: `idevicesyslog ${args.join(' ')}`,
+    // idevicesyslog exposes the log stream but not a portable process-list API. The UI
+    // still discovers process names from observed log records for physical devices.
+    listProcesses() { return []; },
     stop() { closeReader(); if (!child.killed) child.kill('SIGTERM'); }
   };
 }
 
-module.exports = { readApplicationId, getAndroidPid, startAndroidCollector, startIosSimulatorCollector, startIosDeviceCollector };
+module.exports = {
+  readApplicationId,
+  getAndroidPid,
+  listAndroidProcesses,
+  listIosSimulatorProcesses,
+  startAndroidCollector,
+  startIosSimulatorCollector,
+  startIosDeviceCollector
+};
