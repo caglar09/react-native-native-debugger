@@ -25,10 +25,12 @@ async function runLogs(args) {
   if (args.platform === 'ios') collector = args.iosDevice ? startIosDeviceCollector(common) : startIosSimulatorCollector(common);
   else collector = startAndroidCollector(common);
 
+  dashboard.setProcessProvider(() => typeof collector.listProcesses === 'function' ? collector.listProcesses() : []);
+
   console.log('React Native Native Debugger — native logs');
   console.log(`Dashboard: ${dashboard.url}`);
   console.log(`Collector: ${collector.command}`);
-  if (collector.app) console.log(`App: ${collector.app}${collector.pid ? ` (pid ${collector.pid})` : ' (process not running; showing unfiltered logcat)'}`);
+  if (collector.app) console.log(`App: ${collector.app}${collector.pid ? ` (pid ${collector.pid})` : ' (collector remains unfiltered unless --app was explicitly provided)'}`);
   console.log('Press Ctrl+C to stop.');
 
   const stop = async () => {
