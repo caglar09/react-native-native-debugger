@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- Reframed supported integrations from synthetic lifecycle instrumentation to a native log/error bridge.
+- Removed debugger-invented `started`, `request`, `response`, `progress`, `completed`, and similar transfer events from integration patches.
+- Existing upstream `Log.*` / `NSLog` diagnostics are now mirrored to React Native DevTools Console without replacing the original native log call.
+- Real caught/swallowed native failures are surfaced as `native-error` events with error type/message and stack information where available.
+- Added top-level log severity propagation and `levels` filtering in `installConsoleTransport()`.
+- Added native-log Console formatting: `[NATIVE][PLATFORM][INTEGRATION][TAG][LEVEL] message`.
+- Expanded both RNFS integrations to cover real upload errors/logs as well as download diagnostics.
+- `react-native-blob-util@0.25.0` now mirrors the custom-CA/pinning `NSLog` diagnostics introduced in that exact version.
+- `@kesha-antonov/react-native-background-downloader@4.6.3` now mirrors its centralized Android logger and iOS `DLog`/native debug-log pathways rather than synthesizing download lifecycle events.
+- Patch application strips legacy debugger marker blocks in-memory before validating/applying the 0.3 log/error model, preserving transactional rollback.
+
 ## 0.2.0
 
 - Added validated `@dr.pogodin/react-native-fs` 2.36.2 instrumentation for Android Kotlin and iOS Objective-C++.
