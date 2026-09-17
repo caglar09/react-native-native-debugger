@@ -27,7 +27,9 @@
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
-    "AGENTS.md"
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md"
   ],
   "bin": {
     "rn-native-debugger": "cli/index.js"
