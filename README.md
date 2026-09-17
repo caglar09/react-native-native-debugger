@@ -1,12 +1,103 @@
 # react-native-native-debugger
 
-Dev-only **native log and error bridge** for React Native.
+Dev-only **native debugging toolkit** for React Native.
 
-For explicitly supported third-party packages, this library patches small native source points so diagnostics the upstream package already emits can also appear in React Native DevTools Console. It also surfaces real native exceptions/errors that are caught or reduced to callbacks and would otherwise be difficult to inspect.
+It has two complementary layers:
 
-The key rule in v0.3 is simple: **the debugger does not invent normal-operation lifecycle events.** An `output.write(...)`, request start, progress callback, or file move does not become a debugger event just because it might be useful. Existing upstream native logs are mirrored; real failures are surfaced.
+1. A host-side native log collector that shows real Android `adb logcat` and iOS logging output in a local browser dashboard, including logs from packages that have no debugger integration.
+2. Optional source-patch integrations for selected libraries that mirror upstream native logs into React Native DevTools Console and surface real caught/swallowed native errors.
 
-## Supported integrations
+The core rule is simple: **the debugger does not invent normal-operation lifecycle events.** An `output.write(...)`, request start, progress callback, or file move does not become a debugger event just because it might be useful. Existing native logs are collected or mirrored; real failures are surfaced.
+
+## Generic Native Logs dashboard
+
+The `logs` command does not require a source patch for the library producing the log.
+
+Android:
+
+```bash
+npx rn-native-debugger logs
+```
+
+or explicitly:
+
+```bash
+npx rn-native-debugger logs --platform android
+```
+
+The CLI auto-detects `android/app/build.gradle` / `build.gradle.kts` `applicationId`. If that application process is currently running, it resolves the PID and runs logcat with `--pid=<pid>`. You can override either value:
+
+```bash
+npx rn-native-debugger logs \
+  --platform android \
+  --app com.example.app \
+  --device emulator-5554
+```
+
+The browser dashboard opens at `http://127.0.0.1:9876` by default. It includes severity filtering, full-text search, pause/resume, clear, auto-scroll, and live/disconnected state.
+
+This collector reads the logs that the native libraries actually emit. For example, if VisionCamera, Firebase, OkHttp, React Native core, BlobUtil, RNFS, or another SDK writes a native Android log, that record can appear without adding a package-specific patch.
+
+### iOS Simulator
+
+```bash
+npx rn-native-debugger logs --ios-simulator
+```
+
+This uses Apple Unified Logging through:
+
+```text
+xcrun simctl spawn <device> log stream --style compact --level debug
+```
+
+Use a specific Simulator and optional process filter:
+
+```bash
+npx rn-native-debugger logs \
+  --ios-simulator \
+  --device <SIMULATOR_UDID> \
+  --process Audit
+```
+
+### Physical iOS device
+
+Physical-device streaming is supported through `idevicesyslog` when `libimobiledevice` is installed and available on `PATH`:
+
+```bash
+npx rn-native-debugger logs --ios-device
+```
+
+or:
+
+```bash
+npx rn-native-debugger logs --ios-device --device <DEVICE_UDID>
+```
+
+The package does not install or modify device tooling automatically.
+
+### Dashboard architecture
+
+```text
+Android device/emulator                    iOS Simulator / device
+        |                                           |
+     adb logcat                         Unified Logging / idevicesyslog
+        |                                           |
+        +--------------------+----------------------+
+                             |
+                    rn-native-debugger CLI
+                             |
+                       parser / normalizer
+                             |
+                       Node HTTP + SSE
+                             |
+                             v
+                  http://127.0.0.1:9876
+                       Native Logs UI
+```
+
+This layer is intentionally independent of React Native JS and the app process's NativeModule bridge. It therefore remains useful for debugging native libraries before JS listeners are installed or when a library does not have a dedicated debugger integration.
+
+## Supported source-patch integrations
 
 | Package | Validated versions | What is mirrored/surfaced |
 | --- | --- | --- |
@@ -17,9 +108,7 @@ The key rule in v0.3 is simple: **the debugger does not invent normal-operation 
 
 Every integration is optional. Unknown dependency versions are skipped by default instead of being patched speculatively.
 
-This version does **not** yet collect arbitrary logs from every native package in the app or stream host-side `adb logcat` / Apple Unified Logging. That broader device-log collector is intentionally a separate next-stage feature.
-
-## Architecture
+## Source-patch architecture
 
 ```text
 supported third-party native package
@@ -52,21 +141,26 @@ The original upstream log statement remains intact. Android patches use reflecti
 npm install --save-dev react-native-native-debugger
 ```
 
-For the local/package artifact:
-
-```bash
-npm install --save-dev ./react-native-native-debugger-0.3.0.tgz
-```
-
-Then:
+Then inspect native package support:
 
 ```bash
 npx rn-native-debugger doctor
+```
+
+For the generic log dashboard, no package patch is required:
+
+```bash
+npx rn-native-debugger logs
+```
+
+If you also want the selected integration logs mirrored into React Native DevTools Console:
+
+```bash
 npx rn-native-debugger patch
 cd ios && pod install && cd ..
 ```
 
-Because the patch changes native dependency source, rebuild the native application after patching.
+Because `patch` changes native dependency source, rebuild the native application after patching.
 
 For deterministic reinstalls, add:
 
@@ -80,7 +174,7 @@ For deterministic reinstalls, add:
 
 ## DevTools Console transport
 
-Install once near application bootstrap:
+Install once near application bootstrap if you use the optional source-patch bridge:
 
 ```js
 if (__DEV__) {
@@ -136,7 +230,7 @@ type NativeDebugEvent = {
 };
 ```
 
-For v0.3 source-patch integrations, normal records are primarily:
+Source-patch integration records are primarily:
 
 ```text
 category: native-log
@@ -185,13 +279,28 @@ subscription.remove();
 ## CLI
 
 ```bash
+npx rn-native-debugger logs
 npx rn-native-debugger doctor
 npx rn-native-debugger patch
 npx rn-native-debugger status
 npx rn-native-debugger unpatch
 ```
 
-Useful flags:
+Log collector flags:
+
+```text
+--platform android|ios
+--app <applicationId>
+--device <serial-or-udid>
+--process <ios-simulator-process-name>
+--ios-simulator
+--ios-device
+--host <host>
+--port <port>
+--no-open
+```
+
+Patch/status flags:
 
 ```bash
 npx rn-native-debugger patch --strict
@@ -201,7 +310,7 @@ npx rn-native-debugger patch --root /path/to/app
 
 Patch operations are transactional and idempotent. All anchors for an integration are validated before source files are written. If a later anchor or generated-helper ownership check fails, source edits are rolled back.
 
-When upgrading an existing installation from pre-0.3 patches, `patch` removes older debugger-owned marker blocks in-memory and applies the new log/error model inside the same transaction. It does not remove upstream code.
+When upgrading an existing installation from pre-0.3 patches, `patch` removes older debugger-owned marker blocks in-memory and applies the log/error model inside the same transaction. It does not remove upstream code.
 
 ## Configuration
 
@@ -246,10 +355,11 @@ FILE_MOVED
 
 unless that diagnostic already exists in the upstream native library and is being mirrored.
 
-It also does not currently read all Android logcat or iOS Unified Logging records from the device. A generic host-side native log viewer/collector is a separate planned layer because it has different transport, device-selection, PID/bundle filtering, and permission constraints.
+The generic dashboard only displays records that actually reach the platform logging system. If a library performs work silently and emits no native log, the generic collector cannot invent one. The optional source-patch layer can surface real caught errors for explicitly supported libraries without manufacturing normal-operation events.
 
 ## Release behavior
 
+- The host-side log dashboard is a development CLI and is not linked into release app runtime behavior.
 - iOS injected mirror code is under `#if DEBUG` and is compiled out in release builds.
 - Android generated helpers resolve `NativeDebugSink.COMPILED_DEBUG`; release builds permanently degrade the helper to a no-op.
 - Mirror failures are swallowed and must never alter library control flow.
@@ -261,8 +371,10 @@ It also does not currently read all Android logcat or iOS Unified Logging record
 ```bash
 npm test
 node --check cli/index.js
-node --check cli/helpers.js
-node --check cli/patch-engine.js
+node --check cli/logs/index.js
+node --check cli/logs/collectors.js
+node --check cli/logs/dashboard.js
+node --check cli/logs/parser.js
 ruby -c react-native-native-debugger.podspec
 npm pack --dry-run
 ```
