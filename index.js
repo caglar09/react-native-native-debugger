@@ -54,6 +54,9 @@ function matchesFilter(event, options) {
   if (options.events && options.events.length > 0 && !options.events.includes(event.event)) {
     return false;
   }
+  if (options.levels && options.levels.length > 0 && !options.levels.includes(String(event.level || '').toLowerCase())) {
+    return false;
+  }
   return true;
 }
 
@@ -61,7 +64,7 @@ function selectConsoleMethod(event) {
   const name = String(event && event.event || '').toLowerCase();
   const level = String(event && event.level || '').toLowerCase();
   if (level === 'error' || name.includes('fail') || name.includes('error')) return 'error';
-  if (level === 'warn' || name.includes('warn') || name.includes('cancel')) return 'warn';
+  if (level === 'warn' || level === 'warning' || name.includes('warn') || name.includes('cancel')) return 'warn';
   if (level === 'info' || name.includes('complete') || name.includes('finish') || name.includes('response')) return 'info';
   return 'debug';
 }
@@ -70,6 +73,11 @@ function formatPrefix(event) {
   const platform = String(event.platform || 'native').toUpperCase();
   const integration = String(event.integration || 'unknown').toUpperCase();
   const category = String(event.category || 'native').toUpperCase();
+  if (category === 'NATIVE-LOG' || category === 'NATIVE-ERROR') {
+    const tag = String(event.data && event.data.tag || category).toUpperCase();
+    const level = String(event.level || (category === 'NATIVE-ERROR' ? 'error' : 'debug')).toUpperCase();
+    return `[NATIVE][${platform}][${integration}][${tag}][${level}]`;
+  }
   const name = String(event.event || 'event').toUpperCase();
   return `[NATIVE][${platform}][${integration}][${category}][${name}]`;
 }
@@ -109,6 +117,7 @@ async function installConsoleTransport(options = {}) {
     integrations: options.integrations || null,
     categories: options.categories || null,
     events: options.events || null,
+    levels: options.levels ? options.levels.map((level) => String(level).toLowerCase()) : null,
     redactKeys: options.redactKeys || [],
     includeData: options.includeData !== false,
     replayBuffered: options.replayBuffered !== false,
@@ -135,7 +144,20 @@ async function installConsoleTransport(options = {}) {
 
     const method = selectConsoleMethod(safeEvent);
     const prefix = `${settings.prefix}${formatPrefix(safeEvent)}`;
-    if (settings.includeData) {
+    const isNativeLog = safeEvent.category === 'native-log' || safeEvent.category === 'native-error';
+    if (isNativeLog) {
+      const data = safeEvent.data || {};
+      const message = data.message || data.error || '';
+      if (settings.includeData) {
+        const details = { ...data };
+        delete details.message;
+        delete details.tag;
+        if (Object.keys(details).length > 0) console[method](prefix, message, details);
+        else console[method](prefix, message);
+      } else {
+        console[method](prefix, message);
+      }
+    } else if (settings.includeData) {
       console[method](prefix, safeEvent.data || {});
     } else {
       console[method](prefix);
