@@ -12,6 +12,7 @@ const {
 
 const integrations = [
   require('./integrations/rnfs'),
+  require('./integrations/dr-pogodin-rnfs'),
   require('./integrations/blob-util'),
   require('./integrations/background-downloader')
 ];
