@@ -2,10 +2,13 @@
 
 const ANDROID_RE = /^(\d\d-\d\d)\s+(\d\d:\d\d:\d\d\.\d+)\s+(\d+)\s+(\d+)\s+([VDIWEF])\s+([^:]+):\s?(.*)$/;
 const IOS_LEGACY_RE = /^(\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+[^ ]*)\s+(\S+)\s+\[(\d+):(\d+)\]\s+\(([^)]+)\)\s+([^:]+):\s?(.*)$/;
-const IOS_COMPACT_RE = /^(\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+)\s+([A-Za-z]{2})\s+(.+?)\[(\d+):([0-9A-Fa-fx]+)\](?:\s+\(([^)]+)\))?\s+\[([^:\]]*):([^\]]*)\]\s+(.*)$/;
+const IOS_COMPACT_RE = /^(\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+)\s+([A-Za-z]{1,2})\s+(.+?)\[(\d+):([0-9A-Fa-fx]+)\](?:\s+\(([^)]+)\))?\s+\[([^:\]]*):([^\]]*)\]\s+(.*)$/;
 
 const levels = { V: 'verbose', D: 'debug', I: 'info', W: 'warn', E: 'error', F: 'fatal' };
-const iosLevelCodes = { Db: 'debug', In: 'info', Nt: 'info', Er: 'error', Ft: 'fatal', Df: 'default' };
+const iosLevelCodes = {
+  V: 'verbose', D: 'debug', I: 'info', W: 'warn', E: 'error', F: 'fatal',
+  Db: 'debug', In: 'info', Nt: 'info', Er: 'error', Ft: 'fatal', Df: 'default'
+};
 
 const SOURCE_RULES = [
   { test: /rnbackgrounddownloader|com\.eko/i, package: '@kesha-antonov/react-native-background-downloader', service: 'RNBackgroundDownloader', confidence: 'high' },
@@ -113,7 +116,7 @@ function parseIosLine(line) {
 
 function inferIosLevel(line) {
   const text = String(line);
-  const code = text.match(/^\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+\s+([A-Za-z]{2})\s+/);
+  const code = text.match(/^\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+\s+([A-Za-z]{1,2})\s+/);
   if (code && iosLevelCodes[code[1]]) return iosLevelCodes[code[1]];
   const value = text.toLowerCase();
   if (/\bfault\b/.test(value)) return 'fatal';
