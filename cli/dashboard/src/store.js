@@ -1,4 +1,4 @@
-const MAX_BUFFER = 5000;
+import { MAX_BUFFER, trimRetainedBuffer } from './retention.mjs';
 
 function sourceName(event) {
   return event.package || event.integration || event.subsystem || event.tag || 'Unknown';
@@ -98,7 +98,7 @@ export class NativeLogStore {
 
   push(event) {
     this.buffer.unshift(event);
-    if (this.buffer.length > MAX_BUFFER) this.buffer.length = MAX_BUFFER;
+    trimRetainedBuffer(this.buffer, MAX_BUFFER);
     this.updateFacets(event);
     this.scheduleLogs();
   }
