@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PatchPlan, commitTransaction, markerStatus, unpatchFile, removeGeneratedFile } = require('../patch-engine');
-const { iosEvent, javaHelper } = require('../helpers');
+const { iosNativeLog, javaHelper } = require('../helpers');
 
 const definition = {
   key: 'drPogodinRnfs',
@@ -12,124 +12,130 @@ const definition = {
   files(packageRoot) {
     return {
       android: path.join(packageRoot, 'android/src/main/java/com/drpogodin/reactnativefs/Downloader.kt'),
+      androidUploader: path.join(packageRoot, 'android/src/main/java/com/drpogodin/reactnativefs/Uploader.kt'),
       androidHelper: path.join(packageRoot, 'android/src/main/java/com/drpogodin/reactnativefs/RNNDInstrumentation.java'),
-      ios: path.join(packageRoot, 'ios/Downloader.mm')
+      ios: path.join(packageRoot, 'ios/Downloader.mm'),
+      iosUploader: path.join(packageRoot, 'ios/Uploader.mm')
     };
   },
 
   patch(packageRoot, options = {}) {
     const files = this.files(packageRoot);
-    const emitIOS = (integration, category, event, data, level) =>
-      iosEvent(integration, category, event, data, level, options.progressThrottleMs);
-
-    for (const required of [files.android, files.ios]) {
+    for (const required of [files.android, files.androidUploader, files.ios, files.iosUploader]) {
       if (!fs.existsSync(required)) {
         throw new Error(`Missing expected @dr.pogodin/react-native-fs source: ${required}`);
       }
     }
 
     const android = new PatchPlan(files.android)
+      .stripInjectedBlocks()
       .insertAfter(
-        'dr-rnfs.android.start',
-        '            connection = param!!.src!!.openConnection() as HttpURLConnection',
-        `            RNNDInstrumentation.emit("download", "started",
-                "url", param.src?.toString() ?: "",
-                "destination", param.dest?.absolutePath ?: "")`
+        'dr-rnfs.android.native-log.gzip',
+        'Log.d("Downloader", "File compress with GZIP. Decompress...")',
+        '                    RNNDInstrumentation.log("debug", "Downloader", "File compress with GZIP. Decompress...")'
       )
       .insertAfter(
-        'dr-rnfs.android.response',
-        '            var lengthOfFile = getContentLength(connection)',
-        `            RNNDInstrumentation.emit("download", "response",
-                "url", param.src?.toString() ?: "",
-                "status", statusCode,
-                "contentLength", lengthOfFile)`
+        'dr-rnfs.android.native-log.progress',
+        'Log.d("Downloader", "EMIT: $progress, TOTAL:$total")',
+        '                                    RNNDInstrumentation.log("debug", "Downloader", "EMIT: $progress, TOTAL:$total")'
       )
       .insertAfter(
-        'dr-rnfs.android.progress',
-        '                    total += count.toLong()',
-        `                    RNNDInstrumentation.progress(param.src?.toString() ?: "", "download", total, lengthOfFile,
-                        "url", param.src?.toString() ?: "",
-                        "destination", param.dest?.absolutePath ?: "")`
-      )
-      .insertAfter(
-        'dr-rnfs.android.completed',
-        '                res.bytesWritten = total',
-        `                RNNDInstrumentation.emit("download", "completed",
-                    "url", param.src?.toString() ?: "",
-                    "destination", param.dest?.absolutePath ?: "",
-                    "bytesWritten", total,
-                    "status", statusCode)`
-      )
-      .insertAfter(
-        'dr-rnfs.android.failed',
-        '            } catch (ex: Exception) {',
-        `                RNNDInstrumentation.emit("download", "failed",
-                    "url", mParam?.src?.toString() ?: "",
-                    "errorType", ex.javaClass.name,
-                    "error", ex.message ?: "")`
+        'dr-rnfs.android.native-error.download',
+        '} catch (ex: Exception) {',
+        '                RNNDInstrumentation.error("Downloader", "Download failed", ex)'
       );
 
-    const progressSignature = `- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didWriteData:(int64_t)bytesWritten totalBytesWritten:(int64_t)totalBytesWritten totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite
-{`;
+    const androidUploader = new PatchPlan(files.androidUploader)
+      .stripInjectedBlocks()
+      .insertAfter(
+        'dr-rnfs.android-uploader.native-error.upload',
+        `        } catch (e: Exception) {
+          e.printStackTrace()`,
+        '          RNNDInstrumentation.error("Uploader", "Upload failed", e)'
+      );
 
     const ios = new PatchPlan(files.ios)
+      .stripInjectedBlocks()
       .insertAfter(
-        'dr-rnfs.ios.start',
-        '  NSURL* url = [NSURL URLWithString:_params.fromUrl];',
-        emitIOS('@dr.pogodin/react-native-fs', 'download', 'started', `@{
-      @"url": _params.fromUrl ?: @"",
-      @"destination": _params.toFile ?: @""
-    }`)
+        'dr-rnfs.ios.native-log.progress',
+        'NSLog(@"---Progress callback EMIT--- %u", [progress unsignedIntValue]);',
+        iosNativeLog(
+          '@dr.pogodin/react-native-fs',
+          'debug',
+          '@"RNFSDownloader"',
+          '[NSString stringWithFormat:@"---Progress callback EMIT--- %u", [progress unsignedIntValue]]'
+        )
       )
       .insertAfter(
-        'dr-rnfs.ios.progress',
-        progressSignature,
-        emitIOS('@dr.pogodin/react-native-fs', 'download', 'progress', `@{
-      @"url": self.params.fromUrl ?: @"",
-      @"destination": self.params.toFile ?: @"",
-      @"current": @(totalBytesWritten),
-      @"total": @(totalBytesExpectedToWrite)
-    }`)
-      )
-      .insertBefore(
-        'dr-rnfs.ios.completed',
-        '  return _params.completeCallback(_statusCode, _bytesWritten, httpResponse.allHeaderFields, responseBodyString);',
-        emitIOS('@dr.pogodin/react-native-fs', 'download', 'completed', `@{
-      @"url": _params.fromUrl ?: @"",
-      @"destination": _params.toFile ?: @"",
-      @"status": _statusCode ?: @0,
-      @"bytesWritten": _bytesWritten ?: @0
-    }`, 'info')
+        'dr-rnfs.ios.native-log.move-error',
+        'NSLog(@"RNFS download: unable to move tempfile to destination. %@, %@", error, error.userInfo);',
+        iosNativeLog(
+          '@dr.pogodin/react-native-fs',
+          'error',
+          '@"RNFSDownloader"',
+          '[NSString stringWithFormat:@"RNFS download: unable to move tempfile to destination. %@, %@", error, error.userInfo]',
+          '@{ @"error": error.localizedDescription ?: @"", @"errorCode": @(error.code) }'
+        )
       )
       .insertAfter(
-        'dr-rnfs.ios.failed',
-        `- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error
-{
-  if (error) {`,
-        emitIOS('@dr.pogodin/react-native-fs', 'download', 'failed', `@{
-      @"url": _params.fromUrl ?: @"",
-      @"destination": _params.toFile ?: @"",
-      @"error": error.localizedDescription ?: @"",
-      @"errorCode": @(error.code)
-    }`, 'error')
+        'dr-rnfs.ios.native-log.complete-error',
+        'NSLog(@"RNFS download: didCompleteWithError %@, %@", error, error.userInfo);',
+        iosNativeLog(
+          '@dr.pogodin/react-native-fs',
+          'error',
+          '@"RNFSDownloader"',
+          '[NSString stringWithFormat:@"RNFS download: didCompleteWithError %@, %@", error, error.userInfo]',
+          '@{ @"error": error.localizedDescription ?: @"", @"errorCode": @(error.code) }'
+        )
       );
 
-    const [androidResult, iosResult] = commitTransaction(
-      [android, ios],
+    const iosUploaderError = `if (error != nil) {
+${iosNativeLog(
+  '@dr.pogodin/react-native-fs',
+  'error',
+  '@"RNFSUploader"',
+  'error.localizedDescription ?: @"Upload failed"',
+  '@{ @"error": error.localizedDescription ?: @"", @"errorCode": @(error.code) }'
+)}
+}`;
+
+    const iosUploader = new PatchPlan(files.iosUploader)
+      .stripInjectedBlocks()
+      .insertAfter(
+        'dr-rnfs.ios-uploader.native-log.missing-file',
+        'NSLog(@"Failed to open target file at path: %@", filepath);',
+        iosNativeLog(
+          '@dr.pogodin/react-native-fs',
+          'error',
+          '@"RNFSUploader"',
+          '[NSString stringWithFormat:@"Failed to open target file at path: %@", filepath]',
+          '@{ @"path": filepath ?: @"" }'
+        )
+      )
+      .insertAfter(
+        'dr-rnfs.ios-uploader.native-error.complete',
+        '- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error\n{',
+        iosUploaderError
+      );
+
+    const [androidResult, androidUploaderResult, iosResult, iosUploaderResult] = commitTransaction(
+      [android, androidUploader, ios, iosUploader],
       [{
         filePath: files.androidHelper,
         content: javaHelper('com.drpogodin.reactnativefs', '@dr.pogodin/react-native-fs', options.progressThrottleMs)
       }]
     );
 
-    return { android: androidResult, ios: iosResult };
+    return { android: androidResult, androidUploader: androidUploaderResult, ios: iosResult, iosUploader: iosUploaderResult };
   },
 
   unpatch(packageRoot) {
     const files = this.files(packageRoot);
     return {
       android: unpatchFile(files.android),
+      androidUploader: unpatchFile(files.androidUploader),
       ios: unpatchFile(files.ios),
+      iosUploader: unpatchFile(files.iosUploader),
       helper: removeGeneratedFile(files.androidHelper)
     };
   },
@@ -138,7 +144,9 @@ const definition = {
     const files = this.files(packageRoot);
     return {
       android: markerStatus(files.android),
+      androidUploader: markerStatus(files.androidUploader),
       ios: markerStatus(files.ios),
+      iosUploader: markerStatus(files.iosUploader),
       helper: fs.existsSync(files.androidHelper)
     };
   }
