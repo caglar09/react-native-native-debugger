@@ -186,7 +186,7 @@ function LogList({ rows, selectedIds, onSelect }) {
 }
 
 export default function App() {
-  useSyncExternalStore(logStore.subscribeLogs, logStore.getLogRevision, logStore.getLogRevision);
+  const logRevision = useSyncExternalStore(logStore.subscribeLogs, logStore.getLogRevision, logStore.getLogRevision);
   const [connected, setConnected] = useState(false);
   const [paused, setPaused] = useState(false);
   const [filters, setFilters] = useState({ processes: new Set(), level: '', package: '', service: '', search: '' });
@@ -218,7 +218,7 @@ export default function App() {
   }, []);
 
   const activeRows = logStore.getActiveData();
-  const filteredRows = useMemo(() => activeRows.filter((row) => matches(row, filters)).slice(0, limit), [activeRows, filters, limit, logStore.getLogRevision()]);
+  const filteredRows = useMemo(() => activeRows.filter((row) => matches(row, filters)).slice(0, limit), [activeRows, filters, limit, logRevision]);
 
   const setSpeed = (value) => {
     setSpeedState(value);
