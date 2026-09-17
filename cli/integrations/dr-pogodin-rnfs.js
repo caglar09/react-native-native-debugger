@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PatchPlan, commitTransaction, markerStatus, unpatchFile, removeGeneratedFile } = require('../patch-engine');
-const { iosNativeLog, javaHelper } = require('../helpers');
+const { iosNativeError, iosNativeLog, javaHelper } = require('../helpers');
 
 const definition = {
   key: 'drPogodinRnfs',
@@ -90,12 +90,12 @@ const definition = {
       );
 
     const iosUploaderError = `if (error != nil) {
-${iosNativeLog(
+${iosNativeError(
   '@dr.pogodin/react-native-fs',
-  'error',
   '@"RNFSUploader"',
   'error.localizedDescription ?: @"Upload failed"',
-  '@{ @"error": error.localizedDescription ?: @"", @"errorCode": @(error.code) }'
+  'error',
+  '@{ @"errorDomain": error.domain ?: @"", @"errorCode": @(error.code) }'
 )}
 }`;
 
