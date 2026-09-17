@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PatchPlan, commitTransaction, markerStatus, unpatchFile, removeGeneratedFile } = require('../patch-engine');
-const { iosEvent, javaHelper } = require('../helpers');
+const { iosNativeLog, javaHelper } = require('../helpers');
 
 const definition = {
   key: 'rnfs',
@@ -12,119 +12,120 @@ const definition = {
   files(packageRoot) {
     return {
       android: path.join(packageRoot, 'android/src/main/java/com/rnfs/Downloader.java'),
+      androidUploader: path.join(packageRoot, 'android/src/main/java/com/rnfs/Uploader.java'),
       androidHelper: path.join(packageRoot, 'android/src/main/java/com/rnfs/RNNDInstrumentation.java'),
-      ios: path.join(packageRoot, 'Downloader.m')
+      ios: path.join(packageRoot, 'Downloader.m'),
+      iosUploader: path.join(packageRoot, 'Uploader.m')
     };
   },
 
   patch(packageRoot, options = {}) {
     const files = this.files(packageRoot);
-    const emitIOS = (integration, category, event, data, level) =>
-      iosEvent(integration, category, event, data, level, options.progressThrottleMs);
-    for (const required of [files.android, files.ios]) {
+    for (const required of [files.android, files.androidUploader, files.ios, files.iosUploader]) {
       if (!fs.existsSync(required)) throw new Error(`Missing expected RNFS source: ${required}`);
     }
 
-    // Build both plans completely before touching disk (transactional per integration).
+    // Strip instrumentation from older debugger versions in-memory first. The transaction
+    // writes only after all current-version anchors validate.
     const android = new PatchPlan(files.android)
+      .stripInjectedBlocks()
       .insertAfter(
-        'rnfs.android.start',
-        '      connection = (HttpURLConnection)param.src.openConnection();',
-        `      RNNDInstrumentation.emit("download", "started",
-          "url", param.src.toString(),
-          "destination", param.dest.getAbsolutePath());`
+        'rnfs.android.native-log.progress',
+        'Log.d("Downloader", "EMIT: " + String.valueOf(progress) + ", TOTAL:" + String.valueOf(total));',
+        '                  RNNDInstrumentation.log("debug", "Downloader", "EMIT: " + String.valueOf(progress) + ", TOTAL:" + String.valueOf(total));'
       )
       .insertAfter(
-        'rnfs.android.response',
-        '      long lengthOfFile = getContentLength(connection);',
-        `      RNNDInstrumentation.emit("download", "response",
-          "url", param.src.toString(),
-          "status", statusCode,
-          "contentLength", lengthOfFile);`
-      )
+        'rnfs.android.native-error.download',
+        '} catch (Exception ex) {',
+        '          RNNDInstrumentation.error("Downloader", "Download failed", ex);'
+      );
+
+    const androidUploader = new PatchPlan(files.androidUploader)
+      .stripInjectedBlocks()
       .insertAfter(
-        'rnfs.android.progress',
-        '          total += count;',
-        `          RNNDInstrumentation.progress(param.src.toString(), "download", total, lengthOfFile,
-              "url", param.src.toString(),
-              "destination", param.dest.getAbsolutePath());`
-      )
-      .insertAfter(
-        'rnfs.android.completed',
-        '        res.bytesWritten = total;',
-        `        RNNDInstrumentation.emit("download", "completed",
-            "url", param.src.toString(),
-            "destination", param.dest.getAbsolutePath(),
-            "bytesWritten", total,
-            "status", statusCode);`
-      )
-      .insertAfter(
-        'rnfs.android.failed',
-        '        } catch (Exception ex) {',
-        `          RNNDInstrumentation.emit("download", "failed",
-              "url", mParam != null && mParam.src != null ? mParam.src.toString() : "",
-              "errorType", ex.getClass().getName(),
-              "error", ex.getMessage());`
+        'rnfs.android-uploader.native-error.upload',
+        '} catch (Exception e) {',
+        '                    RNNDInstrumentation.error("Uploader", "Upload failed", e);'
       );
 
     const ios = new PatchPlan(files.ios)
+      .stripInjectedBlocks()
       .insertAfter(
-        'rnfs.ios.start',
-        '  NSURL* url = [NSURL URLWithString:_params.fromUrl];',
-        emitIOS('react-native-fs', 'download', 'started', `@{
-      @"url": _params.fromUrl ?: @"",
-      @"destination": _params.toFile ?: @""
-    }`)
+        'rnfs.ios.native-log.progress',
+        'NSLog(@"---Progress callback EMIT--- %u", [progress unsignedIntValue]);',
+        iosNativeLog(
+          'react-native-fs',
+          'debug',
+          '@"RNFSDownloader"',
+          '[NSString stringWithFormat:@"---Progress callback EMIT--- %u", [progress unsignedIntValue]]'
+        )
       )
       .insertAfter(
-        'rnfs.ios.progress',
-        `- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didWriteData:(int64_t)bytesWritten totalBytesWritten:(int64_t)totalBytesWritten totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite
-{
-  NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)downloadTask.response;`,
-        emitIOS('react-native-fs', 'download', 'progress', `@{
-      @"url": self.params.fromUrl ?: @"",
-      @"destination": self.params.toFile ?: @"",
-      @"current": @(totalBytesWritten),
-      @"total": @(totalBytesExpectedToWrite),
-      @"status": @(httpResponse.statusCode)
-    }`)
-      )
-      .insertBefore(
-        'rnfs.ios.completed',
-        '  return _params.completeCallback(_statusCode, _bytesWritten);',
-        emitIOS('react-native-fs', 'download', 'completed', `@{
-      @"url": _params.fromUrl ?: @"",
-      @"destination": _params.toFile ?: @"",
-      @"status": _statusCode ?: @0,
-      @"bytesWritten": _bytesWritten ?: @0
-    }`, 'info')
+        'rnfs.ios.native-log.move-error',
+        'NSLog(@"RNFS download: unable to move tempfile to destination. %@, %@", error, error.userInfo);',
+        iosNativeLog(
+          'react-native-fs',
+          'error',
+          '@"RNFSDownloader"',
+          '[NSString stringWithFormat:@"RNFS download: unable to move tempfile to destination. %@, %@", error, error.userInfo]',
+          '@{ @"error": error.localizedDescription ?: @"", @"errorCode": @(error.code) }'
+        )
       )
       .insertAfter(
-        'rnfs.ios.failed',
-        `- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error
-{
-  if (error) {`,
-        emitIOS('react-native-fs', 'download', 'failed', `@{
-      @"url": _params.fromUrl ?: @"",
-      @"destination": _params.toFile ?: @"",
-      @"error": error.localizedDescription ?: @"",
-      @"errorCode": @(error.code)
-    }`, 'error')
+        'rnfs.ios.native-log.complete-error',
+        'NSLog(@"RNFS download: didCompleteWithError %@, %@", error, error.userInfo);',
+        iosNativeLog(
+          'react-native-fs',
+          'error',
+          '@"RNFSDownloader"',
+          '[NSString stringWithFormat:@"RNFS download: didCompleteWithError %@, %@", error, error.userInfo]',
+          '@{ @"error": error.localizedDescription ?: @"", @"errorCode": @(error.code) }'
+        )
       );
 
-    // Commit only after every anchor and generated-file ownership check succeeded.
-    const [androidResult, iosResult] = commitTransaction(
-      [android, ios],
+    const iosUploaderError = `if (error != nil) {
+${iosNativeLog(
+  'react-native-fs',
+  'error',
+  '@"RNFSUploader"',
+  'error.localizedDescription ?: @"Upload failed"',
+  '@{ @"error": error.localizedDescription ?: @"", @"errorCode": @(error.code) }'
+)}
+}`;
+
+    const iosUploader = new PatchPlan(files.iosUploader)
+      .stripInjectedBlocks()
+      .insertAfter(
+        'rnfs.ios-uploader.native-log.missing-file',
+        'NSLog(@"Failed to open target file at path: %@", filepath);',
+        iosNativeLog(
+          'react-native-fs',
+          'error',
+          '@"RNFSUploader"',
+          '[NSString stringWithFormat:@"Failed to open target file at path: %@", filepath]',
+          '@{ @"path": filepath ?: @"" }'
+        )
+      )
+      .insertAfter(
+        'rnfs.ios-uploader.native-error.complete',
+        '- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error\n{',
+        iosUploaderError
+      );
+
+    const [androidResult, androidUploaderResult, iosResult, iosUploaderResult] = commitTransaction(
+      [android, androidUploader, ios, iosUploader],
       [{ filePath: files.androidHelper, content: javaHelper('com.rnfs', 'react-native-fs', options.progressThrottleMs) }]
     );
-    return { android: androidResult, ios: iosResult };
+    return { android: androidResult, androidUploader: androidUploaderResult, ios: iosResult, iosUploader: iosUploaderResult };
   },
 
   unpatch(packageRoot) {
     const files = this.files(packageRoot);
     return {
       android: unpatchFile(files.android),
+      androidUploader: unpatchFile(files.androidUploader),
       ios: unpatchFile(files.ios),
+      iosUploader: unpatchFile(files.iosUploader),
       helper: removeGeneratedFile(files.androidHelper)
     };
   },
@@ -133,7 +134,9 @@ const definition = {
     const files = this.files(packageRoot);
     return {
       android: markerStatus(files.android),
+      androidUploader: markerStatus(files.androidUploader),
       ios: markerStatus(files.ios),
+      iosUploader: markerStatus(files.iosUploader),
       helper: fs.existsSync(files.androidHelper)
     };
   }
