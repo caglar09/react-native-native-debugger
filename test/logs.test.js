@@ -25,11 +25,12 @@ test('parseAndroidLine preserves unknown lines', () => {
   assert.equal(parseAndroidLine('hello').message, 'hello');
 });
 
-test('inferIosLevel identifies common levels and compact codes', () => {
+test('inferIosLevel identifies words, one-letter priorities, and compact codes', () => {
   assert.equal(inferIosLevel('Error thing'), 'error');
   assert.equal(inferIosLevel('Debug thing'), 'debug');
   assert.equal(inferIosLevel('Warning thing'), 'warn');
   assert.equal(inferIosLevel('2026-09-17 20:55:54.983 Db App[1:2] [x:y] z'), 'debug');
+  assert.equal(inferIosLevel('2026-09-17 21:17:46.665 E App[1:2] [x:y] z'), 'error');
 });
 
 test('parseIosLine preserves raw log content', () => {
@@ -39,10 +40,10 @@ test('parseIosLine preserves raw log content', () => {
 });
 
 test('parseIosLine parses compact unified logging metadata', () => {
-  const event = parseIosLine('2026-09-17 20:55:54.983 Db LenaFieldRN[32921:1dfc2d] [com.apple.network:] sa_dst_compare_internal <private>@0 < <private>@0');
+  const event = parseIosLine('2026-09-17 20:55:54.983 Db ExampleApp[32921:1dfc2d] [com.apple.network:] sa_dst_compare_internal <private>@0 < <private>@0');
   assert.equal(event.platform, 'ios');
   assert.equal(event.level, 'debug');
-  assert.equal(event.process, 'LenaFieldRN');
+  assert.equal(event.process, 'ExampleApp');
   assert.equal(event.pid, 32921);
   assert.equal(event.tid, '1dfc2d');
   assert.equal(event.subsystem, 'com.apple.network');
@@ -53,8 +54,20 @@ test('parseIosLine parses compact unified logging metadata', () => {
   assert.equal(event.sourceKind, 'system');
 });
 
+test('parseIosLine accepts one-letter priority without app-specific rules', () => {
+  const event = parseIosLine('2026-09-17 21:17:46.665 E ExampleApp[47238:1edbeb] [com.apple.CFNetwork:Default] TCP Conn Failed : error 0:61 [61]');
+  assert.equal(event.level, 'error');
+  assert.equal(event.process, 'ExampleApp');
+  assert.equal(event.pid, 47238);
+  assert.equal(event.tid, '1edbeb');
+  assert.equal(event.subsystem, 'com.apple.CFNetwork');
+  assert.equal(event.category, 'Default');
+  assert.equal(event.package, 'Apple System');
+  assert.equal(event.service, 'com.apple.CFNetwork');
+});
+
 test('parseIosLine captures source library when present', () => {
-  const event = parseIosLine('2026-09-17 20:55:54.983 Er LenaFieldRN[32921:1dfc2d] (Network) [com.apple.network:connection] nw_connection_copy_connected_local_endpoint failed');
+  const event = parseIosLine('2026-09-17 20:55:54.983 Er ExampleApp[32921:1dfc2d] (Network) [com.apple.network:connection] nw_connection_copy_connected_local_endpoint failed');
   assert.equal(event.sourceLibrary, 'Network');
   assert.equal(event.subsystem, 'com.apple.network');
   assert.equal(event.category, 'connection');
@@ -92,7 +105,9 @@ test('generated dashboard inline script has valid JavaScript syntax', () => {
   assert.doesNotThrow(() => new vm.Script(match[1]));
 });
 
-test('dashboard exposes dynamic facets, playback speed, selection, and paused-only exports', () => {
+test('dashboard exposes process, dynamic facets, playback speed, selection, and paused-only exports', () => {
+  assert.match(HTML, /id="processBtn"/);
+  assert.match(HTML, /Running \/ observed processes/);
   assert.match(HTML, /id="level"><option value="">All levels<\/option><\/select>/);
   assert.match(HTML, /id="source"><option value="">All packages<\/option><\/select>/);
   assert.match(HTML, /id="service"><option value="">All services<\/option><\/select>/);
@@ -100,23 +115,26 @@ test('dashboard exposes dynamic facets, playback speed, selection, and paused-on
   assert.match(HTML, /data-select/);
   assert.match(HTML, /Export Selected/);
   assert.match(HTML, /exportJsonBtn\.disabled=!paused/);
+  assert.match(HTML, /selectedProcesses\.size/);
 });
 
-test('dashboard keeps filter-before-limit semantics', () => {
-  assert.match(HTML, /function filteredAll\(\)\{return buffer\.filter\(matches\)\}/);
+test('dashboard keeps process and other filters before the visible limit', () => {
+  assert.match(HTML, /function filteredAll\(\)\{return activeData\(\)\.filter\(matches\)\}/);
   assert.match(HTML, /function filtered\(\)\{return filteredAll\(\)\.slice\(0,Number\(limitEl\.value\|\|100\)\)\}/);
 });
 
-test('dashboard serves UI health endpoint', async () => {
+test('dashboard serves UI health and process endpoints', async () => {
   const dashboard = await startDashboard({ host: '127.0.0.1', port: 0, open: false });
+  dashboard.setProcessProvider(() => [{ pid: 42, name: 'ExampleApp' }]);
   const port = new URL(dashboard.url).port;
-  const body = await new Promise((resolve, reject) => {
-    http.get(`http://127.0.0.1:${port}/health`, (response) => {
+  const request = (pathname) => new Promise((resolve, reject) => {
+    http.get(`http://127.0.0.1:${port}${pathname}`, (response) => {
       let value = '';
       response.on('data', (chunk) => value += chunk);
       response.on('end', () => resolve(value));
     }).on('error', reject);
   });
-  assert.equal(body, '{"ok":true}');
+  assert.equal(await request('/health'), '{"ok":true}');
+  assert.deepEqual(JSON.parse(await request('/processes')), [{ pid: 42, name: 'ExampleApp' }]);
   await dashboard.close();
 });
