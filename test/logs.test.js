@@ -6,9 +6,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const vm = require('node:vm');
 const { parseAndroidLine, parseIosLine, inferIosLevel, classifySource, extractLocation } = require('../cli/logs/parser');
 const { readApplicationId } = require('../cli/logs/collectors');
-const { startDashboard } = require('../cli/logs/dashboard');
+const { startDashboard, HTML } = require('../cli/logs/dashboard');
 
 test('parseAndroidLine parses threadtime output', () => {
   const event = parseAndroidLine('09-17 19:40:01.123  1234  1250 E ReactNativeBlobUtil: socket closed');
@@ -83,6 +84,12 @@ test('readApplicationId reads Gradle applicationId', () => {
   fs.writeFileSync(path.join(root, 'android/app/build.gradle'), 'android { defaultConfig { applicationId "com.demo.app" } }');
   assert.equal(readApplicationId(root), 'com.demo.app');
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('generated dashboard inline script has valid JavaScript syntax', () => {
+  const match = HTML.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(match, 'dashboard must contain an inline script');
+  assert.doesNotThrow(() => new vm.Script(match[1]));
 });
 
 test('dashboard serves UI health endpoint', async () => {
