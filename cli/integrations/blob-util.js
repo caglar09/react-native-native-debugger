@@ -8,7 +8,7 @@ const { iosEvent, javaHelper } = require('../helpers');
 const definition = {
   key: 'blobUtil',
   packageName: 'react-native-blob-util',
-  tested: ['0.25.0'],
+  tested: ['0.22.2', '0.25.0'],
   files(packageRoot) {
     return {
       android: path.join(packageRoot, 'android/src/main/java/com/ReactNativeBlobUtil/ReactNativeBlobUtilReq.java'),
