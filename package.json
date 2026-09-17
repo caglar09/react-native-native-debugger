@@ -1,6 +1,6 @@
 {
   "name": "react-native-native-debugger",
-  "version": "0.5.4",
+  "version": "0.6.0-react.0",
   "description": "Dev-only native debugging toolkit for React Native with native log/error bridging and host-side Android/iOS log streaming.",
   "main": "index.js",
   "types": "index.d.ts",
@@ -41,7 +41,9 @@
     "doctor": "node cli/index.js doctor",
     "patch": "node cli/index.js patch",
     "unpatch": "node cli/index.js unpatch",
-    "logs": "node cli/index.js logs"
+    "logs": "node cli/index.js logs",
+    "dashboard:dev": "vite --config cli/dashboard/vite.config.mjs",
+    "dashboard:build": "vite build --config cli/dashboard/vite.config.mjs"
   },
   "peerDependencies": {
     "react": "*",
@@ -64,6 +66,12 @@
     "@kesha-antonov/react-native-background-downloader": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@tanstack/react-virtual": "^3.13.12",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "vite": "^7.1.0"
   },
   "engines": {
     "node": ">=18"
