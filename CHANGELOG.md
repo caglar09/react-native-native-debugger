@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.3
+
+- Decoupled log capture speed from dashboard render speed. Incoming SSE records now enter the bounded ring buffer immediately regardless of the selected UI refresh interval.
+- Render speed now controls only how often the DOM is refreshed; it no longer creates a replay backlog that must be visually drained.
+- Pause captures a stable snapshot for filtering, selection, and export while the live ring buffer continues collecting new logs in the background.
+- Resume discards the frozen snapshot and immediately jumps to the newest buffered state instead of replaying accumulated records one by one.
+- Facets are recomputed from the active snapshot/buffer only when the UI refreshes, reducing unnecessary work during high-volume streams.
+
 ## 0.5.2
 
 - Dashboard level, package/source, and service facets are now generated dynamically from the full in-memory buffer instead of fixed lists.
