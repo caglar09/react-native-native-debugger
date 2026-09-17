@@ -62,6 +62,27 @@ public final class NativeDebugSink {
       String event,
       Map<?, ?> data
   ) {
+    emitInternal(integration, category, event, null, data);
+  }
+
+  /** Called through reflection by patched dependencies that carry a native log level. */
+  public static void emitWithLevel(
+      String integration,
+      String category,
+      String event,
+      String level,
+      Map<?, ?> data
+  ) {
+    emitInternal(integration, category, event, level, data);
+  }
+
+  private static void emitInternal(
+      String integration,
+      String category,
+      String event,
+      String level,
+      Map<?, ?> data
+  ) {
     if (!enabled) return;
 
     Map<String, Object> payload = new LinkedHashMap<>();
@@ -71,6 +92,7 @@ public final class NativeDebugSink {
     payload.put("integration", integration == null ? "unknown" : integration);
     payload.put("category", category == null ? "native" : category);
     payload.put("event", event == null ? "event" : event);
+    if (level != null && !level.isEmpty()) payload.put("level", level);
     payload.put("data", sanitizeMap(data));
 
     synchronized (LOCK) {
@@ -78,7 +100,12 @@ public final class NativeDebugSink {
       appendToDisk(payload);
     }
 
-    Log.d(TAG, "[" + integration + "][" + category + "][" + event + "] " + payload.get("data"));
+    String nativeMessage = "[" + integration + "][" + category + "][" + event + "] " + payload.get("data");
+    String normalizedLevel = level == null ? "" : level.toLowerCase();
+    if ("error".equals(normalizedLevel)) Log.e(TAG, nativeMessage);
+    else if ("warn".equals(normalizedLevel) || "warning".equals(normalizedLevel)) Log.w(TAG, nativeMessage);
+    else if ("info".equals(normalizedLevel)) Log.i(TAG, nativeMessage);
+    else Log.d(TAG, nativeMessage);
     emitToReactNative(payload);
   }
 
