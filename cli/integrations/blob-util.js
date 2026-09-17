@@ -49,7 +49,10 @@ const definition = {
       )
       .insertAfter(
         'blob.android.native-error.interceptor',
-        '                    } catch (Exception ex) {',
+        `                    } catch (Exception ex) {
+                        if (originalResponse != null) {
+                            originalResponse.close();
+                        }`,
         '                        RNNDInstrumentation.error("ReactNativeBlobUtilReq", "Unexpected interceptor error", ex);'
       )
       .insertAfter(
