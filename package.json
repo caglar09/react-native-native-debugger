@@ -1,7 +1,7 @@
 {
   "name": "react-native-native-debugger",
-  "version": "0.2.0",
-  "description": "Dev-only native instrumentation and log transport for React Native, with optional source patch integrations for RNFS variants, react-native-blob-util, and background-downloader.",
+  "version": "0.3.0",
+  "description": "Dev-only native log and error bridge for React Native, with optional source-patch integrations that mirror upstream native logs and surface real caught failures.",
   "main": "index.js",
   "types": "index.d.ts",
   "react-native": "index.js",
@@ -11,7 +11,8 @@
     "debug",
     "native",
     "logs",
-    "instrumentation",
+    "errors",
+    "logcat",
     "rnfs",
     "blob-util",
     "background-downloader"
