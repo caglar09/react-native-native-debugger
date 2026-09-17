@@ -92,6 +92,21 @@ test('generated dashboard inline script has valid JavaScript syntax', () => {
   assert.doesNotThrow(() => new vm.Script(match[1]));
 });
 
+test('dashboard exposes dynamic facets, playback speed, selection, and paused-only exports', () => {
+  assert.match(HTML, /id="level"><option value="">All levels<\/option><\/select>/);
+  assert.match(HTML, /id="source"><option value="">All packages<\/option><\/select>/);
+  assert.match(HTML, /id="service"><option value="">All services<\/option><\/select>/);
+  assert.match(HTML, /id="speed"/);
+  assert.match(HTML, /data-select/);
+  assert.match(HTML, /Export Selected/);
+  assert.match(HTML, /exportJsonBtn\.disabled=!paused/);
+});
+
+test('dashboard keeps filter-before-limit semantics', () => {
+  assert.match(HTML, /function filteredAll\(\)\{return buffer\.filter\(matches\)\}/);
+  assert.match(HTML, /function filtered\(\)\{return filteredAll\(\)\.slice\(0,Number\(limitEl\.value\|\|100\)\)\}/);
+});
+
 test('dashboard serves UI health endpoint', async () => {
   const dashboard = await startDashboard({ host: '127.0.0.1', port: 0, open: false });
   const port = new URL(dashboard.url).port;
