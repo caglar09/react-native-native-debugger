@@ -34,6 +34,11 @@ class PatchPlan {
     return this.content.includes(`${START}${id}`);
   }
 
+  stripInjectedBlocks() {
+    this.content = removeInjectedBlocks(this.content);
+    return this;
+  }
+
   insertAfter(id, anchor, body) {
     if (this.hasMarker(id)) {
       this.actions.push({ id, state: 'already-patched' });
