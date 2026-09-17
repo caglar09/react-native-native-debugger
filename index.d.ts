@@ -13,6 +13,7 @@ export type ConsoleTransportOptions = {
   integrations?: string[];
   categories?: string[];
   events?: string[];
+  levels?: Array<'debug' | 'info' | 'warn' | 'error' | string>;
   redactKeys?: string[];
   includeData?: boolean;
   replayBuffered?: boolean;
