@@ -27,6 +27,7 @@ export class NativeLogStore {
     this.packages = new Set();
     this.services = new Set();
     this.processes = new Set();
+    this.facetSnapshot = { levels: [], packages: [], services: [], processes: [] };
   }
 
   subscribeLogs = (listener) => {
@@ -47,7 +48,17 @@ export class NativeLogStore {
     for (const listener of this.logListeners) listener();
   }
 
+  rebuildFacetSnapshot() {
+    this.facetSnapshot = {
+      levels: [...this.levels].sort(),
+      packages: [...this.packages].sort(),
+      services: [...this.services].sort(),
+      processes: [...this.processes].sort()
+    };
+  }
+
   emitFacets() {
+    this.rebuildFacetSnapshot();
     this.facetRevision += 1;
     for (const listener of this.facetListeners) listener();
   }
@@ -141,12 +152,7 @@ export class NativeLogStore {
   }
 
   getFacets() {
-    return {
-      levels: [...this.levels].sort(),
-      packages: [...this.packages].sort(),
-      services: [...this.services].sort(),
-      processes: [...this.processes].sort()
-    };
+    return this.facetSnapshot;
   }
 }
 
