@@ -56,6 +56,8 @@ function javaHelper(packageName, integrationName, throttleMs = 500) {
   const normalizedThrottleMs = normalizeThrottleMs(throttleMs);
   return `package ${packageName};
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Method;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -64,6 +66,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class RNNDInstrumentation {
   private static volatile boolean resolved = false;
   private static Method emitMethod;
+  private static Method emitWithLevelMethod;
   private static Method enabledMethod;
   private static volatile boolean permanentlyDisabled = false;
   private static final ConcurrentHashMap<String, Long> LAST_PROGRESS = new ConcurrentHashMap<>();
@@ -83,9 +86,15 @@ public final class RNNDInstrumentation {
       }
       enabledMethod = sink.getMethod("isEnabled");
       emitMethod = sink.getMethod("emit", String.class, String.class, String.class, Map.class);
+      try {
+        emitWithLevelMethod = sink.getMethod("emitWithLevel", String.class, String.class, String.class, String.class, Map.class);
+      } catch (Throwable ignored) {
+        emitWithLevelMethod = null;
+      }
     } catch (Throwable ignored) {
       enabledMethod = null;
       emitMethod = null;
+      emitWithLevelMethod = null;
     }
   }
 
@@ -102,19 +111,56 @@ public final class RNNDInstrumentation {
     }
   }
 
-  public static void emit(String category, String event, Object... keyValues) {
+  private static Map<String, Object> map(Object... keyValues) {
+    Map<String, Object> data = new LinkedHashMap<>();
+    if (keyValues != null) {
+      for (int i = 0; i + 1 < keyValues.length; i += 2) {
+        data.put(String.valueOf(keyValues[i]), keyValues[i + 1]);
+      }
+    }
+    return data;
+  }
+
+  private static void emitMap(String category, String event, String level, Map<String, Object> data) {
     if (!enabled()) return;
     try {
-      Map<String, Object> data = new LinkedHashMap<>();
-      if (keyValues != null) {
-        for (int i = 0; i + 1 < keyValues.length; i += 2) {
-          data.put(String.valueOf(keyValues[i]), keyValues[i + 1]);
-        }
+      if (emitWithLevelMethod != null) {
+        emitWithLevelMethod.invoke(null, "${integrationName}", category, event, level, data);
+      } else if (emitMethod != null) {
+        if (level != null) data.put("level", level);
+        emitMethod.invoke(null, "${integrationName}", category, event, data);
       }
-      emitMethod.invoke(null, "${integrationName}", category, event, data);
     } catch (Throwable ignored) {
       // Debug instrumentation must never alter app behavior.
     }
+  }
+
+  public static void emit(String category, String event, Object... keyValues) {
+    emitMap(category, event, null, map(keyValues));
+  }
+
+  public static void log(String level, String tag, String message) {
+    emitMap("native-log", "log", level, map(
+        "tag", tag == null ? "" : tag,
+        "message", message == null ? "" : message));
+  }
+
+  public static void error(String tag, String message, Throwable throwable) {
+    Map<String, Object> data = map(
+        "tag", tag == null ? "" : tag,
+        "message", message == null ? "" : message);
+    if (throwable != null) {
+      data.put("errorType", throwable.getClass().getName());
+      data.put("error", throwable.getMessage() == null ? "" : throwable.getMessage());
+      try {
+        StringWriter writer = new StringWriter();
+        throwable.printStackTrace(new PrintWriter(writer));
+        data.put("stackTrace", writer.toString());
+      } catch (Throwable ignored) {
+        data.put("stackTrace", String.valueOf(throwable));
+      }
+    }
+    emitMap("native-error", "exception", "error", data);
   }
 
   public static void progress(String key, String category, long current, long total, Object... keyValues) {
@@ -153,9 +199,28 @@ if ([[NSNotificationCenter defaultCenter] respondsToSelector:@selector(postNotif
 #endif`;
 }
 
+function iosNativeLog(integration, level, tagExpression, messageExpression, detailsExpression = null) {
+  const details = detailsExpression ? `, @"details": ${detailsExpression}` : '';
+  return iosEvent(integration, 'native-log', 'log', `@{
+      @"tag": (${tagExpression}) ?: @"",
+      @"message": (${messageExpression}) ?: @""${details}
+    }`, level);
+}
+
+function iosNativeError(integration, tagExpression, messageExpression, errorExpression, detailsExpression = null) {
+  const details = detailsExpression ? `, @"details": ${detailsExpression}` : '';
+  return iosEvent(integration, 'native-error', 'exception', `@{
+      @"tag": (${tagExpression}) ?: @"",
+      @"message": (${messageExpression}) ?: @"",
+      @"error": [(${errorExpression}) description] ?: @""${details}
+    }`, 'error');
+}
+
 module.exports = {
   integrationOptions,
   iosEvent,
+  iosNativeError,
+  iosNativeLog,
   isIntegrationEnabled,
   javaHelper,
   loadConfig,
