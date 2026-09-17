@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const rnfs = require('../cli/integrations/rnfs');
+const drRnfs = require('../cli/integrations/dr-pogodin-rnfs');
 const blob = require('../cli/integrations/blob-util');
 const bgdl = require('../cli/integrations/background-downloader');
 
@@ -29,7 +30,6 @@ function assertPatchedThenUnpatched(definition, root, files) {
   const status = definition.status(root);
   assert.ok(Object.values(status).some((value) => value === true || (value && value.markers > 0)));
 
-  // Second application is idempotent.
   definition.patch(root, { progressThrottleMs: 321 });
   definition.unpatch(root);
   for (const file of files) {
@@ -159,6 +159,49 @@ class ProgressReporter {
   ]);
 });
 
+test('@dr.pogodin/react-native-fs 2.36.2 integration patches Kotlin and Objective-C++ anchors', () => {
+  const root = tempRoot('rnnd-dr-rnfs-');
+  write(root, 'android/src/main/java/com/drpogodin/reactnativefs/Downloader.kt', `
+package com.drpogodin.reactnativefs
+class Downloader {
+  fun x(param: DownloadParams?, res: DownloadResult) {
+    try {
+            connection = param!!.src!!.openConnection() as HttpURLConnection
+            var statusCode = connection.responseCode
+            var lengthOfFile = getContentLength(connection)
+                    total += count.toLong()
+                res.bytesWritten = total
+            } catch (ex: Exception) {
+    }
+  }
+}`);
+  write(root, 'ios/Downloader.mm', `
+- (void)x {
+  NSURL* url = [NSURL URLWithString:_params.fromUrl];
+}
+- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didWriteData:(int64_t)bytesWritten totalBytesWritten:(int64_t)totalBytesWritten totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite
+{
+}
+- (void)y {
+  return _params.completeCallback(_statusCode, _bytesWritten, httpResponse.allHeaderFields, responseBodyString);
+}
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error
+{
+  if (error) {
+  }
+}`);
+
+  assert.deepEqual(drRnfs.tested, ['2.36.2']);
+  assertPatchedThenUnpatched(drRnfs, root, [
+    'android/src/main/java/com/drpogodin/reactnativefs/Downloader.kt',
+    'ios/Downloader.mm'
+  ]);
+});
+
+test('BlobUtil declares both validated source versions', () => {
+  assert.deepEqual(blob.tested, ['0.22.2', '0.25.0']);
+});
+
 test('integration does not write partial source changes when a later anchor is missing', () => {
   const root = tempRoot('rnnd-transaction-');
   const androidPath = 'android/src/main/java/com/rnfs/Downloader.java';
@@ -175,7 +218,6 @@ test('integration does not write partial source changes when a later anchor is m
   assert.throws(() => rnfs.patch(root), /anchor/);
   assert.equal(fs.readFileSync(path.join(root, androidPath), 'utf8'), androidOriginal);
 });
-
 
 test('integration rolls back source edits when generated helper ownership conflicts', () => {
   const root = tempRoot('rnnd-helper-conflict-');
