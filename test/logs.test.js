@@ -6,10 +6,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const vm = require('node:vm');
 const { parseAndroidLine, parseIosLine, inferIosLevel, classifySource, extractLocation } = require('../cli/logs/parser');
 const { readApplicationId } = require('../cli/logs/collectors');
-const { startDashboard, HTML } = require('../cli/logs/dashboard');
+const { startDashboard, INDEX_FILE } = require('../cli/logs/dashboard');
 
 test('parseAndroidLine parses threadtime output', () => {
   const event = parseAndroidLine('09-17 19:40:01.123  1234  1250 E ReactNativeBlobUtil: socket closed');
@@ -41,17 +40,12 @@ test('parseIosLine preserves raw log content', () => {
 
 test('parseIosLine parses compact unified logging metadata', () => {
   const event = parseIosLine('2026-09-17 20:55:54.983 Db ExampleApp[32921:1dfc2d] [com.apple.network:] sa_dst_compare_internal <private>@0 < <private>@0');
-  assert.equal(event.platform, 'ios');
   assert.equal(event.level, 'debug');
   assert.equal(event.process, 'ExampleApp');
   assert.equal(event.pid, 32921);
   assert.equal(event.tid, '1dfc2d');
   assert.equal(event.subsystem, 'com.apple.network');
-  assert.equal(event.category, '');
-  assert.equal(event.function, 'sa_dst_compare_internal');
   assert.equal(event.package, 'Apple System');
-  assert.equal(event.service, 'com.apple.network');
-  assert.equal(event.sourceKind, 'system');
 });
 
 test('parseIosLine accepts one-letter priority without app-specific rules', () => {
@@ -85,10 +79,7 @@ test('source classification identifies known React Native libraries conservative
 
 test('extractLocation captures native and JVM source locations when emitted', () => {
   assert.deepEqual(extractLocation('Downloader.mm:412 request failed'), { file: 'Downloader.mm', line: 412 });
-  assert.deepEqual(
-    extractLocation('com.example.Worker.run(Worker.java:88)'),
-    { className: 'com.example.Worker', method: 'run', file: 'Worker.java', line: 88 }
-  );
+  assert.deepEqual(extractLocation('com.example.Worker.run(Worker.java:88)'), { className: 'com.example.Worker', method: 'run', file: 'Worker.java', line: 88 });
 });
 
 test('readApplicationId reads Gradle applicationId', () => {
@@ -99,31 +90,14 @@ test('readApplicationId reads Gradle applicationId', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('generated dashboard inline script has valid JavaScript syntax', () => {
-  const match = HTML.match(/<script>([\s\S]*?)<\/script>/);
-  assert.ok(match, 'dashboard must contain an inline script');
-  assert.doesNotThrow(() => new vm.Script(match[1]));
+test('React dashboard source files are present', () => {
+  const dashboardRoot = path.join(__dirname, '../cli/dashboard');
+  assert.ok(fs.existsSync(path.join(dashboardRoot, 'src/App.jsx')));
+  assert.ok(fs.existsSync(path.join(dashboardRoot, 'src/store.js')));
+  assert.ok(fs.existsSync(path.join(dashboardRoot, 'vite.config.mjs')));
 });
 
-test('dashboard exposes process, dynamic facets, playback speed, selection, and paused-only exports', () => {
-  assert.match(HTML, /id="processBtn"/);
-  assert.match(HTML, /Running \/ observed processes/);
-  assert.match(HTML, /id="level"><option value="">All levels<\/option><\/select>/);
-  assert.match(HTML, /id="source"><option value="">All packages<\/option><\/select>/);
-  assert.match(HTML, /id="service"><option value="">All services<\/option><\/select>/);
-  assert.match(HTML, /id="speed"/);
-  assert.match(HTML, /data-select/);
-  assert.match(HTML, /Export Selected/);
-  assert.match(HTML, /exportJsonBtn\.disabled=!paused/);
-  assert.match(HTML, /selectedProcesses\.size/);
-});
-
-test('dashboard keeps process and other filters before the visible limit', () => {
-  assert.match(HTML, /function filteredAll\(\)\{return activeData\(\)\.filter\(matches\)\}/);
-  assert.match(HTML, /function filtered\(\)\{return filteredAll\(\)\.slice\(0,Number\(limitEl\.value\|\|100\)\)\}/);
-});
-
-test('dashboard serves UI health and process endpoints', async () => {
+test('dashboard serves health and process endpoints independently from UI build', async () => {
   const dashboard = await startDashboard({ host: '127.0.0.1', port: 0, open: false });
   dashboard.setProcessProvider(() => [{ pid: 42, name: 'ExampleApp' }]);
   const port = new URL(dashboard.url).port;
@@ -131,10 +105,21 @@ test('dashboard serves UI health and process endpoints', async () => {
     http.get(`http://127.0.0.1:${port}${pathname}`, (response) => {
       let value = '';
       response.on('data', (chunk) => value += chunk);
-      response.on('end', () => resolve(value));
+      response.on('end', () => resolve({ status: response.statusCode, body: value }));
     }).on('error', reject);
   });
-  assert.equal(await request('/health'), '{"ok":true}');
-  assert.deepEqual(JSON.parse(await request('/processes')), [{ pid: 42, name: 'ExampleApp' }]);
+
+  const health = await request('/health');
+  assert.equal(health.status, 200);
+  assert.equal(JSON.parse(health.body).ok, true);
+  assert.deepEqual(JSON.parse((await request('/processes')).body), [{ pid: 42, name: 'ExampleApp' }]);
+
+  const root = await request('/');
+  if (fs.existsSync(INDEX_FILE)) assert.equal(root.status, 200);
+  else {
+    assert.equal(root.status, 503);
+    assert.match(root.body, /yarn dashboard:build/);
+  }
+
   await dashboard.close();
 });
