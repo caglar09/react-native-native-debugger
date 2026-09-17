@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.4
+
+- Added a generic Process filter separate from package/source, service, level, search, and visible limit.
+- iOS Simulator and Android collectors can now expose running processes to the dashboard; the process picker refreshes periodically and also includes processes observed in buffered logs.
+- Process selection is multi-select, so an app process and related system/service processes can be inspected together without hard-coding any application name.
+- Added PID-to-process enrichment for Android dashboard records when process discovery provides a matching PID.
+- Android logcat now remains unfiltered by default even when the app id is auto-detected; PID filtering is applied only when `--app` is explicitly supplied, allowing related system processes to remain visible.
+- Physical iOS devices continue to use observed log process names because `idevicesyslog` does not provide a portable process-list API.
+- Expanded iOS compact Unified Logging parsing to accept both one-letter (`E`, `D`, `I`, etc.) and two-letter (`Er`, `Db`, etc.) priority formats generically.
+- Added regression coverage for one-letter iOS priority records, process filtering UI, filter-before-limit semantics, and the `/processes` dashboard endpoint.
+
 ## 0.5.3
 
 - Decoupled log capture speed from dashboard render speed. Incoming SSE records now enter the bounded ring buffer immediately regardless of the selected UI refresh interval.
