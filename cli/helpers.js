@@ -61,7 +61,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-final class RNNDInstrumentation {
+public final class RNNDInstrumentation {
   private static volatile boolean resolved = false;
   private static Method emitMethod;
   private static Method enabledMethod;
@@ -89,7 +89,7 @@ final class RNNDInstrumentation {
     }
   }
 
-  static boolean enabled() {
+  public static boolean enabled() {
     if (permanentlyDisabled) return false;
     if (!resolved) resolve();
     if (permanentlyDisabled) return false;
@@ -102,7 +102,7 @@ final class RNNDInstrumentation {
     }
   }
 
-  static void emit(String category, String event, Object... keyValues) {
+  public static void emit(String category, String event, Object... keyValues) {
     if (!enabled()) return;
     try {
       Map<String, Object> data = new LinkedHashMap<>();
@@ -117,7 +117,7 @@ final class RNNDInstrumentation {
     }
   }
 
-  static void progress(String key, String category, long current, long total, Object... keyValues) {
+  public static void progress(String key, String category, long current, long total, Object... keyValues) {
     if (!enabled()) return;
     long now = System.currentTimeMillis();
     Long previous = LAST_PROGRESS.get(key);
