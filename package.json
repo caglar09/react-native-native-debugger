@@ -1,7 +1,7 @@
 {
   "name": "react-native-native-debugger",
-  "version": "0.1.0",
-  "description": "Dev-only native instrumentation and log transport for React Native, with optional source patch integrations for RNFS, react-native-blob-util, and background-downloader.",
+  "version": "0.2.0",
+  "description": "Dev-only native instrumentation and log transport for React Native, with optional source patch integrations for RNFS variants, react-native-blob-util, and background-downloader.",
   "main": "index.js",
   "types": "index.d.ts",
   "react-native": "index.js",
@@ -26,7 +26,8 @@
     "react-native.config.js",
     "README.md",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "AGENTS.md"
   ],
   "bin": {
     "rn-native-debugger": "cli/index.js"
@@ -41,11 +42,15 @@
     "react": "*",
     "react-native": ">=0.76.0",
     "react-native-fs": "*",
+    "@dr.pogodin/react-native-fs": "*",
     "react-native-blob-util": "*",
     "@kesha-antonov/react-native-background-downloader": "*"
   },
   "peerDependenciesMeta": {
     "react-native-fs": {
+      "optional": true
+    },
+    "@dr.pogodin/react-native-fs": {
       "optional": true
     },
     "react-native-blob-util": {
