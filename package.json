@@ -1,6 +1,6 @@
 {
   "name": "react-native-native-debugger",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Dev-only native debugging toolkit for React Native with native log/error bridging and host-side Android/iOS log streaming.",
   "main": "index.js",
   "types": "index.d.ts",
