@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- Added `rn-native-debugger logs`, a host-side native log collector with a local browser dashboard.
+- Android collector streams real `adb logcat` output, auto-detects the React Native app `applicationId`, and applies `--pid` filtering when the app process is running.
+- iOS Simulator collector streams Apple Unified Logging through `xcrun simctl spawn <device> log stream --level debug`.
+- Physical iOS devices are supported through `idevicesyslog` when `libimobiledevice` is installed.
+- Added dashboard filtering by severity and full-text search across tag/process/message, plus pause/resume, clear, auto-scroll, bounded DOM retention, and live connection state.
+- The generic collector is independent of source-patch integrations, so native logs from unpatched libraries such as VisionCamera, Firebase, OkHttp, React Native core, and other SDKs can be inspected when those libraries actually emit native logs.
+- Added parser/applicationId/dashboard tests without adding runtime npm dependencies; the dashboard uses Node HTTP + Server-Sent Events.
+
 ## 0.3.0
 
 - Reframed supported integrations from synthetic lifecycle instrumentation to a native log/error bridge.
