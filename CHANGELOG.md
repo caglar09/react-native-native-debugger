@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0
+
+- Reworked the native logs dashboard into a newer, denser inspector UI with newest records shown first.
+- Batched incoming SSE events before rendering and capped the in-browser ring buffer at 5000 records to reduce repaint pressure and memory growth during high-volume logging.
+- Added visible-record limits: `10`, `20`, `50`, `100`, `500`, `1000`, and `5000`.
+- Added package/source and service filters in addition to severity and full-text search.
+- Added per-record Copy and expandable structured Details actions.
+- Added filtered JSON and NDJSON export; exports preserve the raw native log alongside normalized metadata for later automated/AI analysis.
+- Expanded iOS compact Unified Logging parsing to capture process, PID, TID, source library, subsystem, category, function/tag, priority, and message when Apple exposes those fields.
+- Added best-effort conservative library attribution for known React Native/native sources including RNFS, BlobUtil, background-downloader, VisionCamera, Firebase, Sentry, OkHttp, Hermes, React Native, and Apple system subsystems. Attribution includes a confidence/source-kind marker rather than pretending every OS log can be mapped to an npm package.
+- Added extraction of native/JVM file, class, method, and line metadata when the emitted log or stack trace actually contains source locations.
+- Added regression coverage using the current iOS compact log shape, including `[com.apple.network:category]` and optional `(source library)` fields.
+
 ## 0.4.0
 
 - Added `rn-native-debugger logs`, a host-side native log collector with a local browser dashboard.
