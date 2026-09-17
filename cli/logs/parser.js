@@ -2,7 +2,7 @@
 
 const ANDROID_RE = /^(\d\d-\d\d)\s+(\d\d:\d\d:\d\d\.\d+)\s+(\d+)\s+(\d+)\s+([VDIWEF])\s+([^:]+):\s?(.*)$/;
 const IOS_LEGACY_RE = /^(\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+[^ ]*)\s+(\S+)\s+\[(\d+):(\d+)\]\s+\(([^)]+)\)\s+([^:]+):\s?(.*)$/;
-const IOS_COMPACT_RE = /^(\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+)\s+([A-Za-z]{2})\s+(.+?)\[(\d+):([0-9A-Fa-fx]+)\]\s+\[([^:\]]*):([^\]]*)\]\s+(.*)$/;
+const IOS_COMPACT_RE = /^(\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+)\s+([A-Za-z]{2})\s+(.+?)\[(\d+):([0-9A-Fa-fx]+)\](?:\s+\(([^)]+)\))?\s+\[([^:\]]*):([^\]]*)\]\s+(.*)$/;
 
 const levels = { V: 'verbose', D: 'debug', I: 'info', W: 'warn', E: 'error', F: 'fatal' };
 const iosLevelCodes = { Db: 'debug', In: 'info', Nt: 'info', Er: 'error', Ft: 'fatal', Df: 'default' };
@@ -30,19 +30,19 @@ function extractLocation(text) {
 }
 
 function classifySource(event) {
-  const haystack = [event.tag, event.function, event.subsystem, event.category, event.process, event.message].filter(Boolean).join(' ');
+  const haystack = [event.tag, event.function, event.sourceLibrary, event.subsystem, event.category, event.process, event.message].filter(Boolean).join(' ');
   for (const rule of SOURCE_RULES) {
     if (rule.test.test(haystack)) {
       return { package: rule.package, service: rule.service, packageConfidence: rule.confidence, sourceKind: 'library' };
     }
   }
   if (event.subsystem && /^com\.apple\./i.test(event.subsystem)) {
-    return { package: 'Apple System', service: event.subsystem, packageConfidence: 'high', sourceKind: 'system' };
+    return { package: 'Apple System', service: event.sourceLibrary || event.subsystem, packageConfidence: 'high', sourceKind: 'system' };
   }
   if (event.process) {
-    return { package: event.process, service: event.subsystem || event.tag || event.process, packageConfidence: 'process', sourceKind: 'app/process' };
+    return { package: event.process, service: event.sourceLibrary || event.subsystem || event.tag || event.process, packageConfidence: 'process', sourceKind: 'app/process' };
   }
-  return { package: 'Unknown', service: event.tag || event.subsystem || 'Unknown', packageConfidence: 'unknown', sourceKind: 'unknown' };
+  return { package: 'Unknown', service: event.sourceLibrary || event.tag || event.subsystem || 'Unknown', packageConfidence: 'unknown', sourceKind: 'unknown' };
 }
 
 function enrich(event) {
@@ -70,7 +70,7 @@ function parseIosLine(line) {
   const text = String(line);
   const compact = text.match(IOS_COMPACT_RE);
   if (compact) {
-    const tail = compact[8];
+    const tail = compact[9];
     const symbolMatch = tail.match(/^([^\s]+)\s+(.*)$/);
     const candidate = symbolMatch && /^[+\-[\]A-Za-z_][\w.$:+\-[\]]*$/.test(symbolMatch[1]) ? symbolMatch[1] : '';
     const message = candidate ? symbolMatch[2] : tail;
@@ -82,10 +82,11 @@ function parseIosLine(line) {
       process: compact[3].trim(),
       pid: Number(compact[4]),
       tid: compact[5],
-      subsystem: compact[6] || '',
-      category: compact[7] || '',
+      sourceLibrary: compact[6] || '',
+      subsystem: compact[7] || '',
+      category: compact[8] || '',
       function: candidate,
-      tag: candidate || compact[7] || compact[6] || '',
+      tag: candidate || compact[8] || compact[7] || compact[6] || '',
       message,
       raw: text
     });
