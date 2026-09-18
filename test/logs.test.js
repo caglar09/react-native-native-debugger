@@ -142,6 +142,11 @@ test('React dashboard includes searchable facets and observability workbench vie
   assert.match(appSource, /Errors & Crashes/);
   assert.match(appSource, /Network Inspector/);
   assert.match(appSource, /process-metrics/);
+  assert.match(appSource, /MODEL CONTEXT PROTOCOL/);
+  assert.match(appSource, /Connect OpenCode/);
+  assert.match(appSource, /Connect Codex CLI/);
+  assert.match(appSource, /native_debugger_status/);
+  assert.match(appSource, /window\.location\.pathname/);
 });
 
 test('dashboard serves health and process endpoints independently from UI build', async () => {
@@ -162,9 +167,13 @@ test('dashboard serves health and process endpoints independently from UI build'
   assert.deepEqual(JSON.parse((await request('/processes')).body), [{ pid: 42, name: 'ExampleApp' }]);
 
   const root = await request('/');
-  if (fs.existsSync(INDEX_FILE)) assert.equal(root.status, 200);
-  else {
+  const mcpPage = await request('/mcp');
+  if (fs.existsSync(INDEX_FILE)) {
+    assert.equal(root.status, 200);
+    assert.equal(mcpPage.status, 200);
+  } else {
     assert.equal(root.status, 503);
+    assert.equal(mcpPage.status, 503);
     assert.match(root.body, /yarn dashboard:build/);
   }
 
