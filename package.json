@@ -41,7 +41,7 @@
     "rn-native-debugger": "cli/index.js"
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "node --test --test-force-exit test/*.test.js",
     "doctor": "node cli/index.js doctor",
     "patch": "node cli/index.js patch",
     "unpatch": "node cli/index.js unpatch",
