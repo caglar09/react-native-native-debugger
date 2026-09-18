@@ -175,6 +175,22 @@ Changes under `android/`, `ios/`, `index.js`, or `index.d.ts` must preserve:
 
 Do not make the native sink depend on any instrumented third-party package.
 
+## MCP rules
+
+The MCP layer is a **read-only evidence interface** over the live development debugging session.
+
+- The MCP server must never invent logs, stack frames, network metadata, package attribution, crashes, or root causes.
+- MCP tools may filter, group, correlate, and expose already-captured evidence and measured telemetry.
+- Tool descriptions and server instructions should steer clients to call status first, use app scope by default, inspect log context before causal claims, and distinguish observation from inference.
+- MCP tools must not execute arbitrary shell commands, mutate the application/device, clear logs, kill processes, trigger builds, or change runtime state.
+- Keep stable log ids so an LLM can move from search/error groups to exact chronological context.
+- Android session metadata such as `event.app` is not proof that a specific log line originated from the app process. App scoping must use observed process/source identity.
+- Expose missing telemetry as unavailable/absent instead of synthesizing values.
+- Prefer stdio for local MCP client integration. The dashboard/API should remain loopback-bound by default.
+- Raw native logs may contain application-specific data. Do not broaden network exposure or add remote forwarding implicitly.
+- MCP SDK imports must stay CLI-only and must not enter the React Native mobile bundle/runtime path.
+- Add regression coverage for app scoping, full-session search, context retrieval, error grouping, and dashboard-to-MCP data flow.
+
 ## Tests required before completion
 
 Run at minimum:
@@ -184,6 +200,9 @@ npm test
 node --check cli/index.js
 node --check cli/helpers.js
 node --check cli/patch-engine.js
+node --check cli/logs/session-store.js
+node --check cli/mcp/index.js
+node --check cli/mcp/dashboard-client.js
 npm pack --dry-run
 ```
 
@@ -202,7 +221,7 @@ When touching Kotlin instrumentation, compile a representative patched fixture w
 
 ## Repository hygiene
 
-- Keep the package dependency-light. The CLI currently relies on Node built-ins intentionally.
+- Keep the package dependency-light. Runtime dependencies added for CLI-only features must stay out of the mobile bundle path; the MCP server currently requires `@modelcontextprotocol/sdk` and Zod.
 - Do not commit `node_modules`, generated archives, build directories, or local fixture clones.
 - Keep source files UTF-8 and line-ending agnostic.
 - Do not put secrets or real production URLs/tokens in fixtures.
