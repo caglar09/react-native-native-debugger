@@ -117,6 +117,7 @@ test('dashboard observability API is consumable by MCP DashboardClient', async (
     logContext: (id, options) => session.context(id, options),
     errorGroups: (options) => session.errorGroups(options, app),
     stats: () => session.stats(),
+    clear: () => session.clear(),
     runtime: () => ({ available: true, process: 'com.example.app', fps: 60 })
   });
 
