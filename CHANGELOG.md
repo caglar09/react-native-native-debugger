@@ -2,6 +2,10 @@
 
 ## 0.8.0-mcp.0
 
+- Added a GitHub Actions release pipeline for every successful `master` push: tests, dashboard build, package verification, npm tarball + SHA-256 artifact, versioned GitHub Release, and optional npm publication.
+- npm publication supports either an `NPM_TOKEN` Actions secret or npm trusted publishing through the `NPM_TRUSTED_PUBLISHING=true` repository variable; already-published versions are skipped safely.
+- Added public npm `publishConfig` and documented immutable `package.json` version-driven releases.
+
 - Added a local stdio Model Context Protocol server via `rn-native-debugger mcp` so MCP-capable LLM clients can diagnose the same live native-log session shown in the dashboard.
 - The `logs` host now keeps a server-side session store, allowing an MCP client that connects later to query logs captured earlier in the same debugging session.
 - Added read-only MCP tools for debugger/session status, app-scoped/full native log search, log context around stable ids, grouped native errors/crash signals, process CPU/RAM telemetry, runtime telemetry, and native network evidence.

@@ -52,6 +52,7 @@ function sendMissingBuild(res) {
 
 function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
   const clients = new Set();
+  const sockets = new Set();
   let processProvider = () => [];
   let sessionProvider = () => ({});
   let metricsProvider = () => ({ available: false });
@@ -247,6 +248,52 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
     res.end('Not found');
   });
 
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+
+  function closeDashboard() {
+    for (const client of clients) {
+      try { client.end(); } catch {}
+    }
+    clients.clear();
+
+    return new Promise((done) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        done();
+      };
+
+      server.close(finish);
+
+      // Node fetch/undici and browser/EventSource clients may keep HTTP sockets alive
+      // after a request has completed. During debugger/test teardown we own this
+      // local server, so close idle/active connections explicitly.
+      if (typeof server.closeIdleConnections === 'function') {
+        try { server.closeIdleConnections(); } catch {}
+      }
+      if (typeof server.closeAllConnections === 'function') {
+        try { server.closeAllConnections(); } catch {}
+      } else {
+        for (const socket of sockets) {
+          try { socket.destroy(); } catch {}
+        }
+      }
+
+      // Defensive fallback for older Node versions or a socket that races with close().
+      const timer = setTimeout(() => {
+        for (const socket of sockets) {
+          try { socket.destroy(); } catch {}
+        }
+        finish();
+      }, 250);
+      if (typeof timer.unref === 'function') timer.unref();
+    });
+  }
+
   function publish(event) {
     const payload = `data: ${JSON.stringify(event)}\n\n`;
     for (const client of clients) client.write(payload);
@@ -267,7 +314,7 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
         setMetricsProvider(provider) { metricsProvider = typeof provider === 'function' ? provider : () => ({ available: false }); },
         setProcessMetricsProvider(provider) { processMetricsProvider = typeof provider === 'function' ? provider : () => []; },
         setObservabilityProvider(provider) { observabilityProvider = provider && typeof provider === 'object' ? provider : null; },
-        close: () => new Promise((done) => server.close(done))
+        close: closeDashboard
       });
     });
   });

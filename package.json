@@ -41,7 +41,7 @@
     "rn-native-debugger": "cli/index.js"
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "node --test --test-force-exit test/*.test.js",
     "doctor": "node cli/index.js doctor",
     "patch": "node cli/index.js patch",
     "unpatch": "node cli/index.js unpatch",
@@ -85,5 +85,9 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.25.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

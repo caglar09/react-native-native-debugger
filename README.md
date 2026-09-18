@@ -1060,6 +1060,81 @@ The generic dashboard only displays records that actually reach the platform log
 - Existing upstream native log calls are preserved.
 - Request/response bodies are not bridged to JS by default.
 
+## Automated releases
+
+GitHub Actions runs `.github/workflows/release.yml` on every push to `master` and on manual `workflow_dispatch`.
+
+The release version is always read from:
+
+```json
+{
+  "version": "0.8.0-mcp.0"
+}
+```
+
+in `package.json`.
+
+The workflow:
+
+```text
+master push
+  ↓
+install dependencies
+  ↓
+tests + CLI syntax checks
+  ↓
+dashboard build
+  ↓
+npm pack verification
+  ↓
+.tgz + SHA-256 workflow artifact
+  ↓
+GitHub Release: v<package.version>
+  ↓
+optional npm publish
+```
+
+The generated GitHub Release contains both the npm tarball and its SHA-256 checksum. SemVer prerelease versions such as `0.8.0-mcp.0` are created as GitHub prereleases automatically.
+
+A version is immutable. If `v<package.version>` already exists on GitHub, release creation is skipped. If the exact package version already exists on npm, npm publication is skipped. Bump `package.json` before the next release.
+
+### npm publishing with a token
+
+Create the repository secret:
+
+```text
+Settings
+→ Secrets and variables
+→ Actions
+→ Secrets
+→ NPM_TOKEN
+```
+
+When `NPM_TOKEN` is present, the workflow validates it with `npm whoami` and publishes the exact tarball attached to the release.
+
+### npm trusted publishing
+
+Trusted publishing is also supported. Configure this GitHub repository/workflow as a trusted publisher for the package on npm, then create the GitHub repository variable:
+
+```text
+NPM_TRUSTED_PUBLISHING=true
+```
+
+The workflow has `id-token: write` permission and will use npm OIDC trusted publishing when no `NPM_TOKEN` secret is configured.
+
+If neither configuration is present, GitHub Release creation still runs normally and the npm step reports a notice instead of failing.
+
+The package declares:
+
+```json
+"publishConfig": {
+  "access": "public",
+  "registry": "https://registry.npmjs.org/"
+}
+```
+
+so CI and manual publication target the public npm registry consistently.
+
 ## Development
 
 ```bash

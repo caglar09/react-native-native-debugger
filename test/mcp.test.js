@@ -117,6 +117,7 @@ test('dashboard observability API is consumable by MCP DashboardClient', async (
     logContext: (id, options) => session.context(id, options),
     errorGroups: (options) => session.errorGroups(options, app),
     stats: () => session.stats(),
+    clear: () => session.clear(),
     runtime: () => ({ available: true, process: 'com.example.app', fps: 60 })
   });
 
@@ -131,7 +132,10 @@ test('dashboard observability API is consumable by MCP DashboardClient', async (
   assert.equal(clearResponse.ok, true);
   assert.equal((await client.stats()).totalCaptured, 0);
 
-  await dashboard.close();
+  await Promise.race([
+    dashboard.close(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('dashboard.close() timed out with an open keep-alive socket')), 1500))
+  ]);
 });
 
 test('MCP server source registers evidence-first tools, resources, and prompt', () => {
