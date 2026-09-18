@@ -21,8 +21,8 @@ jobs:
     timeout-minutes: 20
 
     env:
-      NPM_TOKEN: ${ secrets.NPM_TOKEN }}
-      NPM_TRUSTED_PUBLISHING: ${ vars.NPM_TRUSTED_PUBLISHING }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
 
     steps:
       - name: Checkout
@@ -108,10 +108,10 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${ steps.meta.outputs.name }}-${ steps.meta.outputs.version }}
+          name: ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}
           path: |
-            ${ steps.pack.outputs.tgz }}
-            ${ steps.pack.outputs.sha256 }}
+            ${{ steps.pack.outputs.tgz }}
+            ${{ steps.pack.outputs.sha256 }}
             package-contents.txt
           if-no-files-found: error
           retention-days: 30
@@ -119,10 +119,10 @@ jobs:
       - name: Check existing GitHub release
         id: release_state
         env:
-          GH_TOKEN: ${ github.token }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          if gh release view "${ steps.meta.outputs.tag }}" >/dev/null 2>&1; then
+          if gh release view "${{ steps.meta.outputs.tag }}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -131,29 +131,29 @@ jobs:
       - name: Create GitHub release
         if: steps.release_state.outputs.exists != 'true'
         env:
-          GH_TOKEN: ${ github.token }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
 
           EXTRA_ARGS=()
-          if [[ "${ steps.meta.outputs.prerelease }}" == "true" ]]; then
+          if [[ "${{ steps.meta.outputs.prerelease }}" == "true" ]]; then
             EXTRA_ARGS+=(--prerelease)
           fi
 
-          gh release create "${ steps.meta.outputs.tag }}"             "${ steps.pack.outputs.tgz }}"             "${ steps.pack.outputs.sha256 }}"             --target "$GITHUB_SHA"             --title "${ steps.meta.outputs.name }} ${ steps.meta.outputs.version }}"             --generate-notes             "${EXTRA_ARGS[@]}"
+          gh release create "${{ steps.meta.outputs.tag }}"             "${{ steps.pack.outputs.tgz }}"             "${{ steps.pack.outputs.sha256 }}"             --target "$GITHUB_SHA"             --title "${{ steps.meta.outputs.name }} ${{ steps.meta.outputs.version }}"             --generate-notes             "${EXTRA_ARGS[@]}"
 
       - name: Note existing GitHub release
         if: steps.release_state.outputs.exists == 'true'
         run: |
-          echo "::notice::GitHub release ${ steps.meta.outputs.tag }} already exists; release creation was skipped."
+          echo "::notice::GitHub release ${{ steps.meta.outputs.tag }} already exists; release creation was skipped."
 
       - name: Check npm registry
         id: npm_state
         shell: bash
         run: |
           set -euo pipefail
-          PACKAGE="${ steps.meta.outputs.name }}@${ steps.meta.outputs.version }}"
+          PACKAGE="${{ steps.meta.outputs.name }}@${{ steps.meta.outputs.version }}"
 
           if npm view "${PACKAGE}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -189,7 +189,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm publish "${ steps.pack.outputs.tgz }}"             --registry=https://registry.npmjs.org/             --access public             --provenance
+          npm publish "${{ steps.pack.outputs.tgz }}"             --registry=https://registry.npmjs.org/             --access public             --provenance
 
       - name: Note skipped npm publish
         if: steps.npm_state.outputs.exists != 'true' && steps.npm_state.outputs.mode == 'none'
@@ -199,7 +199,7 @@ jobs:
       - name: Note existing npm version
         if: steps.npm_state.outputs.exists == 'true'
         run: |
-          echo "::notice::${ steps.meta.outputs.name }}@${ steps.meta.outputs.version }} already exists on npm; publish was skipped."
+          echo "::notice::${{ steps.meta.outputs.name }}@${{ steps.meta.outputs.version }} already exists on npm; publish was skipped."
 
       - name: Release summary
         if: always()
@@ -208,11 +208,11 @@ jobs:
           {
             echo "## Release"
             echo ""
-            echo "- Package: `${ steps.meta.outputs.name }}`"
-            echo "- Version: `${ steps.meta.outputs.version }}`"
-            echo "- Tag: `${ steps.meta.outputs.tag }}`"
+            echo "- Package: `${{ steps.meta.outputs.name }}`"
+            echo "- Version: `${{ steps.meta.outputs.version }}`"
+            echo "- Tag: `${{ steps.meta.outputs.tag }}`"
             echo "- Commit: `$GITHUB_SHA`"
-            echo "- npm mode: `${ steps.npm_state.outputs.mode || 'unknown' }}`"
-            echo "- GitHub release existed: `${ steps.release_state.outputs.exists || 'unknown' }}`"
-            echo "- npm version existed: `${ steps.npm_state.outputs.exists || 'unknown' }}`"
+            echo "- npm mode: `${{ steps.npm_state.outputs.mode || 'unknown' }}`"
+            echo "- GitHub release existed: `${{ steps.release_state.outputs.exists || 'unknown' }}`"
+            echo "- npm version existed: `${{ steps.npm_state.outputs.exists || 'unknown' }}`"
           } >> "$GITHUB_STEP_SUMMARY"
