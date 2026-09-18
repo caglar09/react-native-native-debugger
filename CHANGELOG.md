@@ -8,6 +8,9 @@
 - Added MCP resources for `rnnd://session`, `rnnd://errors/recent`, and `rnnd://runtime/main`.
 - Added the `diagnose-native-issue` MCP prompt with an evidence-first workflow that explicitly separates captured facts from model inference.
 - Added local observability HTTP endpoints used by MCP: `/api/logs`, `/api/log-context`, `/api/errors`, `/api/log-stats`, and `/api/runtime`.
+- Added a built-in `/mcp` web documentation page in the React dashboard with copy-ready OpenCode and Codex CLI setup commands, MCP architecture, available tools/resources, example prompts, and the evidence-first diagnostic workflow.
+- Fixed structured runtime telemetry parsing when the Android native payload appeared in both normalized message and raw log text.
+- Updated BlobUtil regression fixtures to match the validated interceptor source shape used by the production patch anchors.
 - Native-log search defaults to the detected React Native application scope; clients can explicitly expand to all captured processes for OS/daemon/network correlation.
 - MCP operations are read-only: they do not execute arbitrary shell commands, clear the dashboard session, kill processes, or mutate the app/device.
 - Added `@modelcontextprotocol/sdk` and Zod as CLI runtime dependencies and regression coverage for session scoping, error grouping, log context, runtime telemetry separation, and dashboard-to-MCP data flow.
