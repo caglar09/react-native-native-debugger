@@ -65,9 +65,11 @@ function eventBelongsToApp(event, app) {
   const identities = appIdentity(app);
   if (!identities.length) return true;
 
+  // event.app is session metadata attached to Android records and is not proof that
+  // a specific log line originated from the app process. Scope only from observed
+  // process/source identity so system-daemon logs are not mislabeled as app logs.
   const candidates = [
     event && event.process,
-    event && event.app,
     event && event.package,
     event && event.service
   ].filter(Boolean).map(normalizeText);
@@ -224,15 +226,26 @@ class NativeLogSession {
 
   errorGroups(rawOptions = {}, app = {}) {
     const limit = clampInteger(rawOptions.limit, 1, 100, 20);
-    const result = this.search({
-      ...rawOptions,
+    const options = {
+      scope: rawOptions.scope === 'all' ? 'all' : 'app',
+      text: rawOptions.text || '',
+      process: rawOptions.process || '',
+      package: rawOptions.package || '',
+      service: rawOptions.service || '',
+      subsystem: rawOptions.subsystem || '',
+      tag: rawOptions.tag || '',
+      levels: [],
+      networkOnly: false,
       errorsOnly: true,
-      limit: 500,
-      order: 'desc'
-    }, app);
+      lookbackMs: Math.max(0, Number(rawOptions.lookbackMs) || 0)
+    };
+    const scopeApplied = options.scope !== 'app' || appIdentity(app).length > 0;
 
     const groups = new Map();
-    for (const event of result.logs) {
+    let totalErrorMatches = 0;
+    for (const event of this.logs) {
+      if (!matchesLog(event, options, app)) continue;
+      totalErrorMatches += 1;
       const signature = normalizeErrorSignature(event);
       const current = groups.get(signature) || {
         signature,
@@ -265,10 +278,14 @@ class NativeLogSession {
     return {
       groups: sorted,
       totalGroups: groups.size,
-      totalErrorMatches: result.totalMatches,
-      scope: result.scope,
-      scopeApplied: result.scopeApplied,
-      app: result.app
+      totalErrorMatches,
+      scope: options.scope,
+      scopeApplied,
+      app: {
+        name: app && app.name || null,
+        bundleId: app && app.bundleId || null,
+        primaryProcess: app && app.primaryProcess || null
+      }
     };
   }
 
