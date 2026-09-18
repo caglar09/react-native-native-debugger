@@ -55,6 +55,7 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
   let processProvider = () => [];
   let sessionProvider = () => ({});
   let metricsProvider = () => ({ available: false });
+  let processMetricsProvider = () => [];
 
   const server = http.createServer(async (req, res) => {
     const requestUrl = new URL(req.url, `http://${host}:${port}`);
@@ -96,6 +97,17 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
       } catch (error) {
         res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
         return res.end(JSON.stringify({ error: error && error.message ? error.message : 'Could not read session info' }));
+      }
+    }
+
+    if (requestUrl.pathname === '/process-metrics') {
+      try {
+        const result = await Promise.resolve(processMetricsProvider());
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        return res.end(JSON.stringify(Array.isArray(result) ? result : []));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: error && error.message ? error.message : 'Could not sample process matrix' }));
       }
     }
 
@@ -141,6 +153,7 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
         setProcessProvider(provider) { processProvider = typeof provider === 'function' ? provider : () => []; },
         setSessionProvider(provider) { sessionProvider = typeof provider === 'function' ? provider : () => ({}); },
         setMetricsProvider(provider) { metricsProvider = typeof provider === 'function' ? provider : () => ({ available: false }); },
+        setProcessMetricsProvider(provider) { processMetricsProvider = typeof provider === 'function' ? provider : () => []; },
         close: () => new Promise((done) => server.close(done))
       });
     });
