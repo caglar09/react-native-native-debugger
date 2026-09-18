@@ -105,12 +105,35 @@ function setEnabled(enabled) {
   nativeModule.setEnabled(Boolean(enabled));
 }
 
+function startRuntimeTelemetry(options = {}) {
+  if (!nativeModule || typeof nativeModule.startRuntimeTelemetry !== 'function') return;
+  const intervalMs = Math.max(250, Math.min(5000, Number(options.intervalMs) || 1000));
+  nativeModule.startRuntimeTelemetry(intervalMs);
+}
+
+function stopRuntimeTelemetry() {
+  if (!nativeModule || typeof nativeModule.stopRuntimeTelemetry !== 'function') return;
+  nativeModule.stopRuntimeTelemetry();
+}
+
+async function getRuntimeMetrics() {
+  if (!nativeModule || typeof nativeModule.getRuntimeMetrics !== 'function') {
+    return { available: false, reason: 'native-module-unavailable' };
+  }
+  const value = await nativeModule.getRuntimeMetrics();
+  return value && typeof value === 'object' ? value : { available: false, reason: 'invalid-native-response' };
+}
+
 async function installConsoleTransport(options = {}) {
   if (!nativeModule || !nativeEmitter) {
     if (options.silent !== true) {
       console.warn('[react-native-native-debugger] Native module is not linked; console transport was not installed.');
     }
     return { remove() {} };
+  }
+
+  if (options.runtimeTelemetry !== false) {
+    startRuntimeTelemetry({ intervalMs: options.telemetryIntervalMs });
   }
 
   const settings = {
@@ -186,5 +209,8 @@ module.exports = {
   getBufferedEvents,
   clearBufferedEvents,
   setEnabled,
+  startRuntimeTelemetry,
+  stopRuntimeTelemetry,
+  getRuntimeMetrics,
   redact
 };
