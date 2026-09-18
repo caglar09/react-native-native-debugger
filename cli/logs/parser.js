@@ -33,7 +33,7 @@ function extractLocation(text) {
 }
 
 function classifySource(event) {
-  const haystack = [event.tag, event.function, event.sourceLibrary, event.subsystem, event.category, event.process, event.message].filter(Boolean).join(' ');
+  const haystack = [event.tag, event.function, event.sourceLibrary, event.subsystem, event.category, event.process, event.className, event.method, event.file, event.message].filter(Boolean).join(' ');
   for (const rule of SOURCE_RULES) {
     if (rule.test.test(haystack)) {
       return { package: rule.package, service: rule.service, packageConfidence: rule.confidence, sourceKind: 'library' };
