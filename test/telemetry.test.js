@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { createSessionInfo, sampleMetrics } = require('../cli/logs/telemetry');
+const { createSessionInfo, sampleMetrics, parseHostPsSample } = require('../cli/logs/telemetry');
 
 test('createSessionInfo returns app and device metadata without app-specific rules', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rnnd-telemetry-'));
@@ -75,4 +75,11 @@ test('dashboard exposes session and per-process metrics endpoints', async () => 
   assert.equal(metrics.memoryBytes, 1234);
 
   await dashboard.close();
+});
+
+
+test('parseHostPsSample parses macOS ps RSS and CPU columns', () => {
+  assert.deepEqual(parseHostPsSample('  184320   12.5'), { rssKb: 184320, cpuPercent: 12.5 });
+  assert.equal(parseHostPsSample(''), null);
+  assert.equal(parseHostPsSample('garbage'), null);
 });
