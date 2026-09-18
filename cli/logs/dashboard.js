@@ -53,9 +53,12 @@ function sendMissingBuild(res) {
 function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
   const clients = new Set();
   let processProvider = () => [];
+  let sessionProvider = () => ({});
+  let metricsProvider = () => ({ available: false });
 
   const server = http.createServer(async (req, res) => {
-    if (req.url === '/events') {
+    const requestUrl = new URL(req.url, `http://${host}:${port}`);
+    if (requestUrl.pathname === '/events') {
       res.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
@@ -68,12 +71,12 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
       return;
     }
 
-    if (req.url === '/health') {
+    if (requestUrl.pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       return res.end(JSON.stringify({ ok: true, dashboard: fs.existsSync(INDEX_FILE) ? 'react' : 'missing-build' }));
     }
 
-    if (req.url === '/processes') {
+    if (requestUrl.pathname === '/processes') {
       try {
         const result = await Promise.resolve(processProvider());
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
@@ -84,9 +87,33 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
       }
     }
 
+
+    if (requestUrl.pathname === '/session') {
+      try {
+        const result = await Promise.resolve(sessionProvider());
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        return res.end(JSON.stringify(result || {}));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: error && error.message ? error.message : 'Could not read session info' }));
+      }
+    }
+
+    if (requestUrl.pathname === '/metrics') {
+      try {
+        const processName = requestUrl.searchParams.get('process') || '';
+        const result = await Promise.resolve(metricsProvider(processName));
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        return res.end(JSON.stringify(result || { available: false }));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ available: false, error: error && error.message ? error.message : 'Could not sample metrics' }));
+      }
+    }
+
     if (!fs.existsSync(INDEX_FILE)) return sendMissingBuild(res);
 
-    const requested = safeStaticPath(req.url);
+    const requested = safeStaticPath(requestUrl.pathname);
     if (requested && sendFile(requested, res)) return;
 
     // SPA fallback for future client-side routes.
@@ -112,6 +139,8 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
         url,
         publish,
         setProcessProvider(provider) { processProvider = typeof provider === 'function' ? provider : () => []; },
+        setSessionProvider(provider) { sessionProvider = typeof provider === 'function' ? provider : () => ({}); },
+        setMetricsProvider(provider) { metricsProvider = typeof provider === 'function' ? provider : () => ({ available: false }); },
         close: () => new Promise((done) => server.close(done))
       });
     });
