@@ -310,8 +310,8 @@ const MetricsSidebar = memo(function MetricsSidebar({ metrics, history, logStats
   return (
     <aside className="sidebar right-sidebar">
       <div className="sidebar-heading"><div><strong>Performance</strong><span>{focusProcess || 'Select one process'}</span></div><span className={metrics?.available ? 'pulse-dot' : 'pulse-dot off'} /></div>
-      <MetricCard title="Memory" value={metrics?.available ? formatBytes(metrics.memoryBytes) : 'Unavailable'} subtitle="Resident / PSS memory" values={memoryValues} suffix=" MB" precision={0} />
-      <MetricCard title="CPU" value={metrics?.available && Number.isFinite(metrics.cpuPercent) ? `${metrics.cpuPercent.toFixed(1)}%` : 'Unavailable'} subtitle="Current process CPU" values={cpuValues} suffix="%" precision={1} />
+      <MetricCard title="Memory" value={metrics?.available ? formatBytes(metrics.memoryBytes) : 'Unavailable'} subtitle={metrics?.available ? 'Resident / PSS memory' : (metrics?.reason || 'Process metrics unavailable')} values={memoryValues} suffix=" MB" precision={0} />
+      <MetricCard title="CPU" value={metrics?.available && Number.isFinite(metrics.cpuPercent) ? `${metrics.cpuPercent.toFixed(1)}%` : 'Unavailable'} subtitle={metrics?.available ? `Current process CPU · ${metrics.source || 'runtime'}` : (metrics?.reason || 'Process metrics unavailable')} values={cpuValues} suffix="%" precision={1} />
       <MetricCard title="Log rate" value={`${logStats.logsPerSecond.toFixed(1)}/s`} subtitle={`${logStats.total.toLocaleString()} logs captured`} values={logRateHistory} suffix="/s" precision={1} />
       <LevelDistribution levels={logStats.levels} />
     </aside>
