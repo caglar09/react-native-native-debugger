@@ -125,33 +125,71 @@ function sampleAndroidProcess(name, serial) {
   };
 }
 
+function findIosSimulatorProcess(name, target = 'booted') {
+  if (!name) return null;
+  const processes = listIosSimulatorProcesses(target);
+  const needle = String(name).toLowerCase();
+  return processes.find((item) => String(item.name).toLowerCase() === needle) ||
+    processes.find((item) => String(item.command || '').toLowerCase().endsWith('/' + needle)) ||
+    processes.find((item) => String(item.name).toLowerCase().includes(needle)) ||
+    null;
+}
+
+function parseHostPsSample(value) {
+  const match = String(value || '').trim().match(/^(\d+)\s+([\d.]+)$/);
+  if (!match) return null;
+  const rssKb = Number(match[1]);
+  const cpuPercent = Number(match[2]);
+  if (!Number.isFinite(rssKb) || !Number.isFinite(cpuPercent)) return null;
+  return { rssKb, cpuPercent };
+}
+
 function sampleIosSimulatorProcess(name, target = 'booted') {
-  if (!name) return { available: false, process: null };
-  const rows = run('xcrun', ['simctl', 'spawn', target, 'ps', '-axo', 'pid=,rss=,%cpu=,comm=']).split(/\r?\n/);
-  const candidates = [];
-  for (const row of rows) {
-    const match = row.match(/^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(.+?)\s*$/);
-    if (!match) continue;
-    const command = match[4];
-    const procName = path.basename(command);
-    if (procName === name || command.endsWith('/' + name) || procName.includes(name)) {
-      candidates.push({
-        pid: Number(match[1]),
-        rssKb: Number(match[2]),
-        cpuPercent: Number(match[3]),
-        process: procName
-      });
-    }
+  if (!name) return { available: false, process: null, timestamp: Date.now(), reason: 'No process selected' };
+
+  const processInfo = findIosSimulatorProcess(name, target);
+  if (!processInfo?.pid) {
+    return { available: false, process: name, timestamp: Date.now(), reason: 'Process not found in simulator' };
   }
-  const hit = candidates[0];
-  if (!hit) return { available: false, process: name };
+
+  // Simulator app processes are host macOS processes with the same PID. Sampling from
+  // host ps is more reliable than asking the simulator runtime ps implementation for
+  // rss/%cpu columns, which varies between runtime/Xcode versions.
+  const hostSample = parseHostPsSample(run('ps', ['-p', String(processInfo.pid), '-o', 'rss=,%cpu=']));
+  if (hostSample) {
+    return {
+      available: true,
+      source: 'host-ps',
+      process: processInfo.name,
+      pid: processInfo.pid,
+      memoryBytes: hostSample.rssKb * 1024,
+      cpuPercent: hostSample.cpuPercent,
+      timestamp: Date.now()
+    };
+  }
+
+  // Fallback for environments where host ps cannot observe the simulator process.
+  const simulatorRows = run('xcrun', ['simctl', 'spawn', target, 'ps', '-axo', 'pid=,rss=,%cpu=,comm=']).split(/\r?\n/);
+  const row = simulatorRows.find((line) => new RegExp('^\\s*' + processInfo.pid + '\\s+').test(line));
+  const fallback = row && row.match(/^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(.+?)\s*$/);
+  if (fallback) {
+    return {
+      available: true,
+      source: 'simctl-ps',
+      process: path.basename(fallback[4]),
+      pid: Number(fallback[1]),
+      memoryBytes: Number(fallback[2]) * 1024,
+      cpuPercent: Number(fallback[3]),
+      timestamp: Date.now()
+    };
+  }
+
   return {
-    available: true,
-    process: hit.process,
-    pid: hit.pid,
-    memoryBytes: hit.rssKb * 1024,
-    cpuPercent: hit.cpuPercent,
-    timestamp: Date.now()
+    available: false,
+    process: processInfo.name || name,
+    pid: processInfo.pid,
+    timestamp: Date.now(),
+    reason: 'Could not sample simulator process with host or simctl ps'
   };
 }
 
@@ -198,5 +236,7 @@ module.exports = {
   getAndroidDeviceInfo,
   getIosSimulatorDeviceInfo,
   sampleAndroidProcess,
-  sampleIosSimulatorProcess
+  sampleIosSimulatorProcess,
+  findIosSimulatorProcess,
+  parseHostPsSample
 };
