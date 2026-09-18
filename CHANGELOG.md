@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0-react.2
+
+- Removed the dashboard's global 5000-record retention cap. Logs now remain in the in-memory session until the user explicitly presses Clear or the dashboard process/page is restarted.
+- Removed severity-aware eviction because filtering must operate over the complete captured session rather than a lossy global ring buffer.
+- React virtualization continues to bound DOM row count even when the in-memory log session grows.
+- Replaced retention-floor tests with regression coverage that forbids reintroducing a hard buffer cap or automatic trimming.
+
+# Changelog
+
 ## 0.6.0-react.1
 
 - Kept the dashboard ring buffer capped at 5000 records while making retention severity-aware.
