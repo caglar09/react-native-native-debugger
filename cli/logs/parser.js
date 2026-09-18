@@ -1,6 +1,6 @@
 'use strict';
 
-const ANDROID_RE = /^(\d\d-\d\d)\s+(\d\d:\d\d:\d\d\.\d+)\s+(\d+)\s+(\d+)\s+([VDIWEF])\s+([^:]+):\s?(.*)$/;
+const ANDROID_PREFIX_RE = /^(\d\d-\d\d)\s+(\d\d:\d\d:\d\d\.\d+)\s+(\d+)\s+(\d+)\s+([VDIWEF])\s+(.*)$/;
 const IOS_LEGACY_RE = /^(\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+[^ ]*)\s+(\S+)\s+\[(\d+):(\d+)\]\s+\(([^)]+)\)\s+([^:]+):\s?(.*)$/;
 const IOS_COMPACT_RE = /^(\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+)\s+([A-Za-z]{1,2})\s+(.+?)\[(\d+):([0-9A-Fa-fx]+)\](?:\s+\(([^)]+)\))?\s+\[([^:\]]*):([^\]]*)\]\s+(.*)$/;
 
@@ -20,7 +20,7 @@ const SOURCE_RULES = [
   { test: /sentry/i, package: '@sentry/react-native', service: 'Sentry', confidence: 'medium' },
   { test: /okhttp/i, package: 'okhttp', service: 'OkHttp', confidence: 'high' },
   { test: /hermes/i, package: 'hermes', service: 'Hermes', confidence: 'high' },
-  { test: /reactnative|react-native|\brct\b/i, package: 'react-native', service: 'React Native', confidence: 'medium' }
+  { test: /reactnative|react-native|bridgelessreactcontext|reactcontext|com\.facebook\.react|\brct\b/i, package: 'react-native', service: 'React Native', confidence: 'medium' }
 ];
 
 function extractLocation(text) {
