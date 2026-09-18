@@ -177,6 +177,94 @@ A common stdio MCP configuration shape is:
 }
 ```
 
+### OpenCode
+
+With the debugger package installed in the React Native project, add the local stdio MCP server from that project:
+
+```bash
+opencode mcp add rn-native-debugger -- \
+  npx rn-native-debugger mcp \
+  --connect http://127.0.0.1:9876
+```
+
+Then verify the connection:
+
+```bash
+opencode mcp list
+```
+
+To make it available to every OpenCode project instead of only the current project:
+
+```bash
+opencode mcp add rn-native-debugger --global -- \
+  npx rn-native-debugger mcp \
+  --connect http://127.0.0.1:9876
+```
+
+Equivalent OpenCode V2 project configuration:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "rn-native-debugger": {
+        "type": "local",
+        "command": [
+          "npx",
+          "rn-native-debugger",
+          "mcp",
+          "--connect",
+          "http://127.0.0.1:9876"
+        ]
+      }
+    }
+  }
+}
+```
+
+Example prompt:
+
+```text
+Use rn-native-debugger to inspect my current React Native app.
+Find the most important native errors, inspect the log context around them,
+and correlate them with CPU/RAM/FPS and network evidence.
+```
+
+### Codex CLI
+
+Add the debugger as a local stdio MCP server:
+
+```bash
+codex mcp add rn-native-debugger -- \
+  npx rn-native-debugger mcp \
+  --connect http://127.0.0.1:9876
+```
+
+Verify it:
+
+```bash
+codex mcp list
+```
+
+Inside Codex TUI, use:
+
+```text
+/mcp
+```
+
+to inspect the active MCP servers and tools.
+
+Example prompt:
+
+```text
+Use the rn-native-debugger MCP tools to diagnose why the latest upload failed.
+Start with app-scoped errors, inspect the surrounding native log context,
+then expand to system/network processes only if the evidence points there.
+```
+
+> Start `rn-native-debugger logs` first. OpenCode/Codex starts the MCP stdio adapter, but the adapter connects to the already-running debugger session at `127.0.0.1:9876`.
+
 If the dashboard uses another host/port, point `--connect` at it.
 
 The MCP process uses **stdio** for the protocol, so it is normally launched by the MCP client rather than kept in a separate interactive terminal.
