@@ -32,6 +32,44 @@ function extractLocation(text) {
   return {};
 }
 
+function extractRuntimeTelemetry(text) {
+  const value = String(text || '');
+  const marker = 'RNND_TELEMETRY ';
+  const index = value.indexOf(marker);
+  if (index < 0) return null;
+  const json = value.slice(index + marker.length).trim();
+  try {
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractNetworkMetadata(text) {
+  const value = String(text || '');
+  if (!/(?:CFNetwork|com\.apple\.network|network\.framework|\bnw_|okhttp|\bTLS\b|\bQUIC\b|https?:\/\/|socket|connection)/i.test(value)) {
+    return null;
+  }
+
+  const url = (value.match(/https?:\/\/[^\s"'<>\])}]+/i) || [])[0] || null;
+  const endpoint = (value.match(/(?:\[[0-9a-f:]+\]|(?:\d{1,3}\.){3}\d{1,3}):\d+/i) || [])[0] || null;
+  const tls = value.match(/\bTLS(?:v|\s|_version[=: ]*)?(1\.[0-3])\b/i);
+  const error = value.match(/\b(ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|ENOTCONN|EPIPE)\b/i);
+  let protocol = null;
+  if (/\bQUIC\b|http\/3|\bh3\b/i.test(value)) protocol = 'QUIC';
+  else if (/http\/2|\bh2\b/i.test(value)) protocol = 'HTTP/2';
+  else if (/https?:\/\//i.test(value)) protocol = 'HTTP';
+
+  return {
+    url,
+    endpoint,
+    tlsVersion: tls ? `TLS ${tls[1]}` : null,
+    protocol,
+    errorCode: error ? error[1].toUpperCase() : null
+  };
+}
+
 function classifySource(event) {
   const haystack = [event.tag, event.function, event.sourceLibrary, event.subsystem, event.category, event.process, event.className, event.method, event.file, event.message].filter(Boolean).join(' ');
   for (const rule of SOURCE_RULES) {
@@ -49,8 +87,26 @@ function classifySource(event) {
 }
 
 function enrich(event) {
-  const located = { ...event, ...extractLocation(`${event.message || ''} ${event.raw || ''}`) };
-  return { ...located, ...classifySource(located) };
+  const combined = `${event.message || ''} ${event.raw || ''}`;
+  const located = { ...event, ...extractLocation(combined) };
+  const telemetry = extractRuntimeTelemetry(combined);
+  if (telemetry) {
+    return {
+      ...located,
+      kind: 'runtime-telemetry',
+      telemetry,
+      package: 'react-native-native-debugger',
+      service: 'Runtime Telemetry',
+      packageConfidence: 'high',
+      sourceKind: 'instrumentation'
+    };
+  }
+  const network = extractNetworkMetadata(combined);
+  return {
+    ...located,
+    ...classifySource(located),
+    ...(network ? { network } : {})
+  };
 }
 
 function parseAndroidLine(line) {
@@ -137,4 +193,4 @@ function inferIosLevel(line) {
   return 'default';
 }
 
-module.exports = { parseAndroidLine, parseIosLine, inferIosLevel, classifySource, extractLocation, enrich };
+module.exports = { parseAndroidLine, parseIosLine, inferIosLevel, classifySource, extractLocation, extractRuntimeTelemetry, extractNetworkMetadata, enrich };
