@@ -77,6 +77,9 @@ async function runLogs(args) {
     stats() {
       return sessionStore.stats();
     },
+    clear() {
+      sessionStore.clear();
+    },
     async runtime(processName) {
       const session = await getSession();
       const target = processName || session?.app?.primaryProcess || args.process || collector.app || null;
