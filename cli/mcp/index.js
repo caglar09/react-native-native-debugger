@@ -209,18 +209,45 @@ async function runMcp(args = {}) {
         client.processList()
       ]);
       const logCounts = stats?.processes || {};
-      const byPid = new Map((observed || []).filter((item) => item?.pid).map((item) => [Number(item.pid), item]));
       const primary = session?.app?.primaryProcess || null;
-      const rows = (metrics || []).map((metric) => ({
-        ...byPid.get(Number(metric.pid)),
-        ...metric,
-        isMainApp: Boolean(metric.isMainApp || (primary && metric.process === primary)),
-        capturedLogs: logCounts[metric.process] || 0
-      }));
+      const byKey = new Map();
+
+      for (const item of observed || []) {
+        const key = item?.pid ? `pid:${item.pid}` : `name:${item?.name || item?.process || 'unknown'}`;
+        byKey.set(key, { ...item, process: item.process || item.name || null });
+      }
+
+      for (const metric of metrics || []) {
+        const key = metric?.pid ? `pid:${metric.pid}` : `name:${metric?.process || 'unknown'}`;
+        byKey.set(key, { ...(byKey.get(key) || {}), ...metric });
+      }
+
+      for (const [process, capturedLogs] of Object.entries(logCounts)) {
+        const existingKey = [...byKey.keys()].find((key) => byKey.get(key)?.process === process || byKey.get(key)?.name === process);
+        if (existingKey) {
+          byKey.set(existingKey, { ...byKey.get(existingKey), capturedLogs });
+        } else {
+          byKey.set(`logs:${process}`, { process, capturedLogs });
+        }
+      }
+
+      const rows = [...byKey.values()]
+        .map((item) => ({
+          ...item,
+          process: item.process || item.name || 'Unknown',
+          isMainApp: Boolean(item.isMainApp || (primary && (item.process === primary || item.name === primary))),
+          capturedLogs: item.capturedLogs ?? logCounts[item.process || item.name] ?? 0
+        }))
+        .sort((a, b) =>
+          Number(b.isMainApp) - Number(a.isMainApp) ||
+          Number(b.capturedLogs || 0) - Number(a.capturedLogs || 0) ||
+          Number(b.cpuPercent || 0) - Number(a.cpuPercent || 0)
+        );
+
       return toolSuccess({
         primaryProcess: primary,
         processes: rows,
-        totalObservedProcesses: observed?.length || rows.length
+        totalObservedProcesses: rows.length
       });
     })
   );
