@@ -1,9 +1,23 @@
+function isKnown(value) {
+  return Boolean(value && String(value).toLowerCase() !== 'unknown');
+}
+
 function sourceName(event) {
-  return event.package || event.integration || event.subsystem || event.tag || 'Unknown';
+  return (isKnown(event.package) && event.package) ||
+    event.integration ||
+    event.process ||
+    event.subsystem ||
+    (isKnown(event.tag) && event.tag) ||
+    'Unknown';
 }
 
 function serviceName(event) {
-  return event.service || event.subsystem || event.category || event.tag || 'Unknown';
+  return (isKnown(event.service) && event.service) ||
+    event.subsystem ||
+    event.category ||
+    (isKnown(event.tag) && event.tag) ||
+    event.process ||
+    'Unknown';
 }
 
 function levelName(event) {
@@ -28,6 +42,7 @@ export class NativeLogStore {
     this.facetSnapshot = { levels: [], packages: [], services: [], processes: [] };
     this.levelCounts = new Map();
     this.rateBuckets = new Map();
+    this.processByPid = new Map();
   }
 
   subscribeLogs = (listener) => {
@@ -97,6 +112,9 @@ export class NativeLogStore {
   }
 
   push(event) {
+    if (!event.process && event.pid && this.processByPid.has(Number(event.pid))) {
+      event.process = this.processByPid.get(Number(event.pid));
+    }
     this.buffer.unshift(event);
     const level = levelName(event);
     this.levelCounts.set(level, (this.levelCounts.get(level) || 0) + 1);
@@ -111,12 +129,31 @@ export class NativeLogStore {
 
   setRunningProcesses(processes) {
     let changed = false;
+    let enriched = false;
     for (const process of processes || []) {
-      if (!process?.name || this.processes.has(process.name)) continue;
-      this.processes.add(process.name);
-      changed = true;
+      if (!process?.name) continue;
+      if (process.pid) this.processByPid.set(Number(process.pid), process.name);
+      if (!this.processes.has(process.name)) {
+        this.processes.add(process.name);
+        changed = true;
+      }
     }
-    if (changed) this.emitFacets();
+
+    for (const event of this.buffer) {
+      if (!event.process && event.pid && this.processByPid.has(Number(event.pid))) {
+        event.process = this.processByPid.get(Number(event.pid));
+        enriched = true;
+      }
+    }
+
+    if (enriched) {
+      this.packages = new Set(this.buffer.map(sourceName).filter(Boolean));
+      this.services = new Set(this.buffer.map(serviceName).filter(Boolean));
+    }
+    if (changed || enriched) {
+      this.emitFacets();
+      if (enriched) this.scheduleLogs(true);
+    }
   }
 
   setRenderInterval(ms) {
@@ -151,6 +188,7 @@ export class NativeLogStore {
     this.processes = new Set();
     this.levelCounts = new Map();
     this.rateBuckets = new Map();
+    this.processByPid = new Map();
     this.emitFacets();
     this.emitLogs();
   }
