@@ -174,15 +174,416 @@ For deterministic reinstalls, add:
 
 ## DevTools Console transport
 
-Install once near application bootstrap if you use the optional source-patch bridge:
+Install the transport once near application bootstrap if you use the optional source-patch bridge:
 
 ```js
+import dbg from 'react-native-native-debugger';
+// or:
+// const dbg = require('react-native-native-debugger');
+
 if (__DEV__) {
-  require('react-native-native-debugger').installConsoleTransport({
+  dbg.installConsoleTransport({
     includeData: true,
     replayBuffered: true,
+    levels: ['info', 'error', 'fatal'],
   });
 }
+```
+
+> **Important:** use `levels` for severity values such as `debug`, `info`, `warn`, `error`, or `fatal`.  
+> `events` filters the event **name** stored in `event.event`, such as `log` or `exception`. It is not a severity filter.
+
+`installConsoleTransport(options)` returns a Promise that resolves to the underlying React Native event subscription:
+
+```js
+const subscription = await dbg.installConsoleTransport({
+  levels: ['warn', 'error'],
+});
+
+// Later, if needed:
+subscription.remove();
+```
+
+### Console transport options
+
+All options are optional.
+
+| Prop | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `integrations` | `string[]` | no filter | Only allow records whose `event.integration` exactly matches one of the supplied integration names. |
+| `categories` | `string[]` | no filter | Only allow records whose `event.category` exactly matches one of the supplied categories, typically `native-log` or `native-error`. |
+| `events` | `string[]` | no filter | Only allow records whose `event.event` exactly matches one of the supplied event names, typically `log` or `exception`. |
+| `levels` | `string[]` | no filter | Filter by log severity. Values are normalized to lowercase before matching. Typical values are `debug`, `info`, `warn`, `error`, and `fatal`. |
+| `redactKeys` | `string[]` | `[]` | Add extra object-key names that must be redacted before an event is exposed to `onEvent` or written to Console. Built-in sensitive keys are always redacted as well. |
+| `includeData` | `boolean` | `true` | Controls whether structured `event.data` is printed to Console. For native logs/errors the human-readable message is still printed when this is `false`; only the extra structured details are omitted. |
+| `replayBuffered` | `boolean` | `true` | Replays events that were captured by the native sink before the JS transport subscribed. Set to `false` if you only want newly arriving events. |
+| `silent` | `boolean` | `false` | When `true`, suppresses the warning emitted if the native module is not linked/available. |
+| `prefix` | `string` | `''` | Prepends custom text to the standard `[NATIVE][...]` Console prefix. |
+| `onEvent` | `(event) => void` | none | Receives each filtered, deduplicated, and redacted event before it is printed to Console. Useful for custom debug UIs or forwarding into another dev-only sink. |
+
+Empty filter arrays behave like an unset filter. When more than one filter is supplied, they are combined with **AND** semantics.
+
+For example:
+
+```js
+dbg.installConsoleTransport({
+  integrations: ['react-native-blob-util'],
+  categories: ['native-log', 'native-error'],
+  events: ['log', 'exception'],
+  levels: ['warn', 'error', 'fatal'],
+});
+```
+
+means:
+
+```text
+integration matches
+AND category matches
+AND event name matches
+AND level matches
+```
+
+### `integrations`
+
+Use this when you only want output from one or more patched libraries:
+
+```js
+dbg.installConsoleTransport({
+  integrations: [
+    'react-native-blob-util',
+    '@kesha-antonov/react-native-background-downloader',
+  ],
+});
+```
+
+Matching is exact against `event.integration`. There is no wildcard or substring matching.
+
+If `integrations` is omitted, events from every integration are allowed.
+
+### `categories`
+
+The source-patch bridge primarily emits these categories:
+
+```text
+native-log
+native-error
+```
+
+Example:
+
+```js
+dbg.installConsoleTransport({
+  categories: ['native-error'],
+});
+```
+
+This keeps real surfaced native failures while excluding mirrored normal native log messages.
+
+### `events`
+
+This filters the `event.event` field, not the severity.
+
+Current source-patch records are primarily:
+
+```text
+category: native-log
+event: log
+```
+
+and:
+
+```text
+category: native-error
+event: exception
+```
+
+So this is valid:
+
+```js
+dbg.installConsoleTransport({
+  events: ['exception'],
+});
+```
+
+This is usually **not** what you want:
+
+```js
+dbg.installConsoleTransport({
+  events: ['info', 'error', 'fatal'], // wrong field for severity
+});
+```
+
+Use:
+
+```js
+dbg.installConsoleTransport({
+  levels: ['info', 'error', 'fatal'],
+});
+```
+
+instead.
+
+### `levels`
+
+Use `levels` to control severity:
+
+```js
+dbg.installConsoleTransport({
+  levels: ['error', 'fatal'],
+});
+```
+
+The configured values are normalized to lowercase. Matching is then performed against the lowercase value of `event.level`.
+
+Typical levels are:
+
+```text
+debug
+info
+warn
+error
+fatal
+```
+
+The type intentionally also accepts custom strings because integrations may expose an additional native severity name in the future.
+
+### `includeData`
+
+Default:
+
+```js
+includeData: true
+```
+
+For a `native-log` / `native-error`, the transport separates the human-readable message from the rest of the structured data.
+
+With:
+
+```js
+dbg.installConsoleTransport({
+  includeData: true,
+});
+```
+
+Console output can look like:
+
+```text
+[NATIVE][ANDROID][REACT-NATIVE-BLOB-UTIL][REACTNATIVEBLOBUTILREQ][ERROR]
+Socket timeout while sending request
+{ errorType: 'SocketTimeoutException', stackTrace: '...' }
+```
+
+With:
+
+```js
+dbg.installConsoleTransport({
+  includeData: false,
+});
+```
+
+the message remains visible but the extra details object is omitted:
+
+```text
+[NATIVE][ANDROID][REACT-NATIVE-BLOB-UTIL][REACTNATIVEBLOBUTILREQ][ERROR]
+Socket timeout while sending request
+```
+
+For non-`native-log` / non-`native-error` records, setting `includeData: false` prints only the generated prefix.
+
+### `replayBuffered`
+
+The native bridge can capture records before the JS transport has been installed.
+
+By default:
+
+```js
+replayBuffered: true
+```
+
+so bootstrap-time native records can still appear after `installConsoleTransport()` runs.
+
+Use:
+
+```js
+dbg.installConsoleTransport({
+  replayBuffered: false,
+});
+```
+
+when you only want records emitted after the subscription is installed.
+
+The transport subscribes to live events **before** replaying the native buffer. Event IDs are deduplicated, so the small overlap window between live subscription and replay does not normally result in duplicate Console records.
+
+### `redactKeys`
+
+The transport recursively redacts common sensitive object keys before calling `onEvent` or printing event data.
+
+Built-in protected keys include:
+
+```text
+authorization
+proxy-authorization
+cookie
+set-cookie
+x-api-key
+api-key
+apikey
+token
+access_token
+refresh_token
+password
+secret
+```
+
+You can add project-specific keys:
+
+```js
+dbg.installConsoleTransport({
+  redactKeys: [
+    'sessionId',
+    'customerAccessKey',
+    'privateCredential',
+  ],
+});
+```
+
+Matching is case-insensitive and also treats a key containing a protected term as sensitive.
+
+For example:
+
+```js
+{
+  authorization: 'Bearer abc',
+  customerAccessKey: '123',
+}
+```
+
+is exposed as:
+
+```js
+{
+  authorization: '[REDACTED]',
+  customerAccessKey: '[REDACTED]',
+}
+```
+
+Redaction traverses nested objects and arrays. Extremely deep structures are bounded and become `[MAX_DEPTH]`.
+
+### `prefix`
+
+Use `prefix` when several apps/environments share the same development Console:
+
+```js
+dbg.installConsoleTransport({
+  prefix: '[AUDIT] ',
+});
+```
+
+Example output:
+
+```text
+[AUDIT] [NATIVE][IOS][REACT-NATIVE-FS][RNFS][ERROR] ...
+```
+
+The supplied prefix is added **before** the standard debugger prefix; it does not replace it.
+
+### `onEvent`
+
+Use `onEvent` when you want access to the normalized event in addition to the normal Console output:
+
+```js
+dbg.installConsoleTransport({
+  onEvent(event) {
+    // event has already passed transport filters
+    // and sensitive values have already been redacted.
+    myDebugStore.push(event);
+  },
+});
+```
+
+The callback receives the event after:
+
+```text
+filtering
+  ↓
+event-id deduplication
+  ↓
+redaction
+  ↓
+onEvent(event)
+  ↓
+console.debug/info/warn/error(...)
+```
+
+Returning a value from `onEvent` does not cancel the normal Console output.
+
+### `silent`
+
+If the native module is unavailable, the default behavior is:
+
+```text
+[react-native-native-debugger] Native module is not linked; console transport was not installed.
+```
+
+For setups where the dependency may intentionally be absent, suppress that warning with:
+
+```js
+dbg.installConsoleTransport({
+  silent: true,
+});
+```
+
+The function still resolves to a harmless subscription-like object with a `remove()` method.
+
+### Recommended configurations
+
+Show everything with full metadata:
+
+```js
+dbg.installConsoleTransport({
+  includeData: true,
+  replayBuffered: true,
+});
+```
+
+Only warnings and failures:
+
+```js
+dbg.installConsoleTransport({
+  levels: ['warn', 'error', 'fatal'],
+  includeData: true,
+  replayBuffered: true,
+});
+```
+
+Only real surfaced native errors:
+
+```js
+dbg.installConsoleTransport({
+  categories: ['native-error'],
+  events: ['exception'],
+  levels: ['error', 'fatal'],
+  includeData: true,
+});
+```
+
+Only one integration:
+
+```js
+dbg.installConsoleTransport({
+  integrations: ['react-native-blob-util'],
+  includeData: true,
+});
+```
+
+Custom dev-only event handling without losing normal Console output:
+
+```js
+dbg.installConsoleTransport({
+  onEvent(event) {
+    debugEventStore.add(event);
+  },
+});
 ```
 
 Typical mirrored upstream log:
@@ -199,21 +600,8 @@ Typical real native failure:
 Socket timeout while sending request
 ```
 
-You can filter at transport level:
+Or leave all transport filters unset and use the React Native DevTools Console search box with `[NATIVE]`, an integration/package name, tag, category, or level.
 
-```js
-installConsoleTransport({
-  integrations: ['react-native-blob-util'],
-  categories: ['native-log', 'native-error'],
-  levels: ['warn', 'error'],
-  includeData: true,
-  replayBuffered: true,
-});
-```
-
-Or leave filters unset and use the React Native DevTools Console search box with `[NATIVE]`, a package name, tag, or level.
-
-Common secret keys such as authorization, cookies, API keys, tokens, passwords, and secrets are recursively redacted by the JS Console transport.
 
 ## Record model
 
