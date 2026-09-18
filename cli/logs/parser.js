@@ -89,7 +89,7 @@ function classifySource(event) {
 function enrich(event) {
   const combined = `${event.message || ''} ${event.raw || ''}`;
   const located = { ...event, ...extractLocation(combined) };
-  const telemetry = extractRuntimeTelemetry(combined);
+  const telemetry = extractRuntimeTelemetry(event.message) || extractRuntimeTelemetry(event.raw);
   if (telemetry) {
     return {
       ...located,
