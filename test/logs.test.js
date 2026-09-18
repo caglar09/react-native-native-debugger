@@ -20,6 +20,22 @@ test('parseAndroidLine parses threadtime output', () => {
   assert.equal(event.service, 'ReactNativeBlobUtil');
 });
 
+test('parseAndroidLine preserves colon-bearing Android tags', () => {
+  const event = parseAndroidLine('09-18 09:48:53.918  7443  7443 E unknown:BridgelessReactContext: \\tat com.facebook.react.modules.core.ReactChoreographer.doFrame(ReactChoreographer.java:42)');
+  assert.equal(event.pid, 7443);
+  assert.equal(event.tag, 'unknown:BridgelessReactContext');
+  assert.match(event.message, /ReactChoreographer/);
+  assert.equal(event.package, 'react-native');
+  assert.equal(event.service, 'React Native');
+});
+
+test('source classification falls back to resolved Android process instead of Unknown', () => {
+  const event = classifySource({ platform: 'android', process: 'com.example.app', tag: 'CustomNativeTag', message: 'boom' });
+  assert.equal(event.package, 'com.example.app');
+  assert.equal(event.service, 'CustomNativeTag');
+  assert.equal(event.packageConfidence, 'process');
+});
+
 test('parseAndroidLine preserves unknown lines', () => {
   assert.equal(parseAndroidLine('hello').message, 'hello');
 });
@@ -90,11 +106,15 @@ test('readApplicationId reads Gradle applicationId', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('React dashboard source files are present', () => {
+test('React dashboard source files are present and facet filters are searchable', () => {
   const dashboardRoot = path.join(__dirname, '../cli/dashboard');
-  assert.ok(fs.existsSync(path.join(dashboardRoot, 'src/App.jsx')));
+  const appSource = fs.readFileSync(path.join(dashboardRoot, 'src/App.jsx'), 'utf8');
   assert.ok(fs.existsSync(path.join(dashboardRoot, 'src/store.js')));
   assert.ok(fs.existsSync(path.join(dashboardRoot, 'vite.config.mjs')));
+  assert.match(appSource, /SearchableFacet/);
+  assert.match(appSource, /Search processes/);
+  assert.match(appSource, /All packages/);
+  assert.match(appSource, /All services/);
 });
 
 test('dashboard serves health and process endpoints independently from UI build', async () => {
