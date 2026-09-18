@@ -683,8 +683,14 @@ export default function App() {
     return { rows, matched };
   }, [activeRows, filters, query, limit, logRevision]);
 
-  const networkRows = useMemo(() => activeRows.filter(isNetworkEvent), [activeRows, logRevision]);
-  const errorRows = useMemo(() => activeRows.filter((row) => ['error', 'fatal'].includes(levelName(row)) || isCrashEvent(row)), [activeRows, logRevision]);
+  const networkRows = useMemo(
+    () => activeRows.filter((row) => isNetworkEvent(row) && facetMatches(row, filters) && queryMatches(row, query)),
+    [activeRows, filters, query, logRevision]
+  );
+  const errorRows = useMemo(
+    () => activeRows.filter((row) => (['error', 'fatal'].includes(levelName(row)) || isCrashEvent(row)) && facetMatches(row, filters) && queryMatches(row, query)),
+    [activeRows, filters, query, logRevision]
+  );
 
   const anomalyGroups = useMemo(() => {
     const groups = new Map();
