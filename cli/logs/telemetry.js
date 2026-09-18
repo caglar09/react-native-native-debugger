@@ -22,20 +22,13 @@ function readProjectPackage(root) {
 function detectIosBundleId(root) {
   const ios = path.join(root, 'ios');
   if (!fs.existsSync(ios)) return null;
-  const queue = [ios];
-  while (queue.length) {
-    const current = queue.shift();
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        if (!entry.name.endsWith('.xcodeproj') && !entry.name.endsWith('.xcworkspace') && !entry.name.includes('Pods')) queue.push(full);
-        continue;
-      }
-      if (entry.name !== 'project.pbxproj') continue;
-      const source = fs.readFileSync(full, 'utf8');
-      const match = source.match(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;]+);/);
-      if (match) return match[1].trim().replace(/^"|"$/g, '');
-    }
+  for (const entry of fs.readdirSync(ios, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.endsWith('.xcodeproj')) continue;
+    const projectFile = path.join(ios, entry.name, 'project.pbxproj');
+    if (!fs.existsSync(projectFile)) continue;
+    const source = fs.readFileSync(projectFile, 'utf8');
+    const match = source.match(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;]+);/);
+    if (match) return match[1].trim().replace(/^"|"$/g, '');
   }
   return null;
 }
