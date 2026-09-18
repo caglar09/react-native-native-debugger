@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const readline = require('readline');
-const { parseAndroidLine, parseIosLine } = require('./parser');
+const { parseAndroidLine, parseIosLine, enrich } = require('./parser');
 
 function commandExists(command) {
   const result = spawnSync(command, ['--help'], { stdio: 'ignore' });
@@ -102,24 +102,42 @@ function lineReader(child, onLine, onError) {
 function startAndroidCollector(options) {
   if (!commandExists('adb')) throw new Error('adb was not found. Install Android platform-tools and ensure adb is on PATH.');
   const appId = options.app || readApplicationId(options.root);
+  const appPid = appId ? getAndroidPid(appId, options.device) : null;
   const args = [];
   if (options.device) args.push('-s', options.device);
   args.push('logcat', '-v', 'threadtime');
-  // Only constrain logcat when the user explicitly requested an app. Auto-detected app ids
-  // remain metadata so the dashboard can still inspect related system processes.
-  const pid = options.app ? getAndroidPid(options.app, options.device) : null;
-  if (pid) args.push(`--pid=${pid}`);
+  // Keep the stream broad by default. Only explicit --app requests constrain logcat.
+  const filterPid = options.app ? appPid : null;
+  if (filterPid) args.push(`--pid=${filterPid}`);
+
+  let processByPid = new Map();
+  const refreshProcessMap = () => {
+    const processes = listAndroidProcesses(options.device);
+    processByPid = new Map(processes.filter((item) => item && item.pid && item.name).map((item) => [Number(item.pid), item.name]));
+    return processes;
+  };
+  refreshProcessMap();
+  const processRefreshTimer = setInterval(refreshProcessMap, 2000);
+  if (typeof processRefreshTimer.unref === 'function') processRefreshTimer.unref();
 
   const child = spawn('adb', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   const closeReader = lineReader(child,
-    (line) => options.onEvent({ ...parseAndroidLine(line), app: appId || undefined }),
+    (line) => {
+      const parsed = parseAndroidLine(line);
+      const process = parsed.pid ? processByPid.get(Number(parsed.pid)) : null;
+      options.onEvent(enrich({ ...parsed, process: process || parsed.process, app: appId || undefined }));
+    },
     (message) => options.onDiagnostic({ platform: 'android', level: 'error', tag: 'collector', message })
   );
   child.on('exit', (code, signal) => options.onExit({ platform: 'android', code, signal }));
   return {
-    platform: 'android', app: appId, pid, command: `adb ${args.join(' ')}`,
-    listProcesses() { return listAndroidProcesses(options.device); },
-    stop() { closeReader(); if (!child.killed) child.kill('SIGTERM'); }
+    platform: 'android', app: appId, pid: appPid, command: `adb ${args.join(' ')}`,
+    listProcesses() { return refreshProcessMap(); },
+    stop() {
+      clearInterval(processRefreshTimer);
+      closeReader();
+      if (!child.killed) child.kill('SIGTERM');
+    }
   };
 }
 
