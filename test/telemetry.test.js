@@ -51,3 +51,28 @@ test('physical iOS metrics degrade explicitly when unavailable', () => {
   assert.equal(result.process, 'ExampleApp');
   assert.equal(typeof result.timestamp, 'number');
 });
+
+
+test('dashboard exposes session and per-process metrics endpoints', async () => {
+  const http = require('node:http');
+  const { startDashboard } = require('../cli/logs/dashboard');
+  const dashboard = await startDashboard({ host: '127.0.0.1', port: 0, open: false });
+  dashboard.setSessionProvider(() => ({ app: { name: 'ExampleApp' } }));
+  dashboard.setMetricsProvider((processName) => ({ available: true, process: processName, memoryBytes: 1234 }));
+
+  const port = new URL(dashboard.url).port;
+  const get = (pathname) => new Promise((resolve, reject) => {
+    http.get(`http://127.0.0.1:${port}${pathname}`, (response) => {
+      let body = '';
+      response.on('data', (chunk) => body += chunk);
+      response.on('end', () => resolve(JSON.parse(body)));
+    }).on('error', reject);
+  });
+
+  assert.equal((await get('/session')).app.name, 'ExampleApp');
+  const metrics = await get('/metrics?process=ExampleApp');
+  assert.equal(metrics.process, 'ExampleApp');
+  assert.equal(metrics.memoryBytes, 1234);
+
+  await dashboard.close();
+});
