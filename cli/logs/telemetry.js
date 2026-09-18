@@ -203,6 +203,154 @@ function sampleIosSimulatorProcess(name, target = 'booted') {
   };
 }
 
+function parseElapsedSeconds(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const daySplit = text.split('-');
+  let days = 0;
+  let clock = text;
+  if (daySplit.length === 2) {
+    days = Number(daySplit[0]) || 0;
+    clock = daySplit[1];
+  }
+  const parts = clock.split(':').map(Number);
+  if (parts.some((part) => !Number.isFinite(part))) return null;
+  let seconds = days * 86400;
+  if (parts.length === 3) seconds += parts[0] * 3600 + parts[1] * 60 + parts[2];
+  else if (parts.length === 2) seconds += parts[0] * 60 + parts[1];
+  else seconds += parts[0];
+  return seconds;
+}
+
+function sampleIosSimulatorProcessMatrix(target = 'booted') {
+  const simulatorProcesses = listIosSimulatorProcesses(target);
+  if (!simulatorProcesses.length) return [];
+
+  const simulatorByPid = new Map(simulatorProcesses.map((item) => [Number(item.pid), item]));
+  const rows = run('ps', ['-axo', 'pid=,ppid=,rss=,%cpu=,state=,etime=,comm=']).split(/\r?\n/);
+  const result = [];
+
+  for (const row of rows) {
+    const match = row.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(\S+)\s+(\S+)\s+(.+?)\s*$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const simulatorProcess = simulatorByPid.get(pid);
+    if (!simulatorProcess) continue;
+    result.push({
+      pid,
+      ppid: Number(match[2]),
+      process: simulatorProcess.name,
+      command: simulatorProcess.command || match[7],
+      memoryBytes: Number(match[3]) * 1024,
+      memoryKind: 'rss',
+      cpuPercent: Number(match[4]),
+      state: match[5],
+      elapsedSeconds: parseElapsedSeconds(match[6]),
+      platform: 'ios',
+      source: 'host-ps'
+    });
+  }
+
+  return result;
+}
+
+function parseAndroidCpuInfo(value) {
+  const cpuByPid = new Map();
+  for (const line of String(value || '').split(/\r?\n/)) {
+    const match = line.match(/^\s*([\d.]+)%\s+(\d+)\/([^:]+):/);
+    if (!match) continue;
+    cpuByPid.set(Number(match[2]), {
+      cpuPercent: Number(match[1]),
+      process: match[3].trim()
+    });
+  }
+  return cpuByPid;
+}
+
+function sampleAndroidProcessMatrix(serial) {
+  const args = androidArgs(serial, ['shell', 'ps', '-A', '-o', 'PID,PPID,RSS,STAT,NAME']);
+  let output = run('adb', args);
+  let hasExtendedColumns = Boolean(output);
+  if (!output) {
+    hasExtendedColumns = false;
+    output = run('adb', androidArgs(serial, ['shell', 'ps', '-A']));
+  }
+  if (!output) return [];
+
+  const cpuByPid = parseAndroidCpuInfo(run('adb', androidArgs(serial, ['shell', 'dumpsys', 'cpuinfo'])));
+  const result = [];
+  const lines = output.split(/\r?\n/).filter(Boolean);
+  const header = lines.shift() || '';
+  const headerColumns = header.trim().split(/\s+/);
+  const pidIndex = headerColumns.indexOf('PID');
+  const ppidIndex = headerColumns.indexOf('PPID');
+  const rssIndex = headerColumns.indexOf('RSS');
+  const stateIndex = headerColumns.findIndex((name) => name === 'STAT' || name === 'S');
+  const nameIndex = headerColumns.findIndex((name) => name === 'NAME' || name === 'CMD' || name === 'ARGS');
+
+  for (const line of lines) {
+    const columns = line.trim().split(/\s+/);
+    const pid = Number(columns[pidIndex >= 0 ? pidIndex : 1]);
+    if (!Number.isFinite(pid)) continue;
+    const cpu = cpuByPid.get(pid);
+    const processName = nameIndex >= 0
+      ? columns.slice(nameIndex).join(' ')
+      : (columns[columns.length - 1] || cpu?.process || '');
+    const rssKb = rssIndex >= 0 ? Number(columns[rssIndex]) : null;
+
+    result.push({
+      pid,
+      ppid: ppidIndex >= 0 ? Number(columns[ppidIndex]) || null : null,
+      process: path.basename(processName || cpu?.process || ''),
+      command: processName || cpu?.process || '',
+      memoryBytes: Number.isFinite(rssKb) ? rssKb * 1024 : null,
+      memoryKind: Number.isFinite(rssKb) ? 'rss' : null,
+      cpuPercent: Number.isFinite(cpu?.cpuPercent) ? cpu.cpuPercent : null,
+      state: stateIndex >= 0 ? columns[stateIndex] : null,
+      platform: 'android',
+      source: hasExtendedColumns ? 'adb-ps' : 'adb-ps-fallback'
+    });
+  }
+
+  return result;
+}
+
+function sampleProcessMatrix({ collector, device, mainProcess }) {
+  let items = [];
+  if (collector.platform === 'android') items = sampleAndroidProcessMatrix(device);
+  else if (collector.platform === 'ios') items = sampleIosSimulatorProcessMatrix(collector.target || device || 'booted');
+  else return [];
+
+  const normalizedMain = String(mainProcess || collector.app || '').toLowerCase();
+  return items
+    .map((item) => ({
+      ...item,
+      isMainApp: Boolean(normalizedMain && (
+        String(item.process || '').toLowerCase() === normalizedMain ||
+        String(item.command || '').toLowerCase().includes(normalizedMain)
+      ))
+    }))
+    .sort((a, b) =>
+      Number(b.isMainApp) - Number(a.isMainApp) ||
+      Number(b.cpuPercent || 0) - Number(a.cpuPercent || 0) ||
+      Number(b.memoryBytes || 0) - Number(a.memoryBytes || 0)
+    );
+}
+
+function runtimeCapabilities(collector) {
+  return {
+    processMatrix: collector.platform === 'android' || collector.platform === 'ios',
+    processMemory: collector.platform === 'android' || collector.platform === 'ios',
+    processCpu: collector.platform === 'android' || collector.platform === 'ios',
+    nativeRuntimeTelemetry: true,
+    fps: 'requires-native-runtime',
+    thermalState: 'requires-native-runtime',
+    appMemory: 'host-or-native-runtime',
+    networkSignals: 'log-derived',
+    symbolication: false
+  };
+}
+
 async function createSessionInfo({ collector, root, app, device, processName }) {
   const pkg = readProjectPackage(root);
   let deviceInfo;
@@ -233,7 +381,8 @@ async function createSessionInfo({ collector, root, app, device, processName }) 
     collector: {
       platform: collector.platform,
       command: collector.command
-    }
+    },
+    capabilities: runtimeCapabilities(collector)
   };
 }
 
@@ -250,7 +399,13 @@ module.exports = {
   getIosSimulatorDeviceInfo,
   sampleAndroidProcess,
   sampleIosSimulatorProcess,
+  sampleIosSimulatorProcessMatrix,
+  sampleAndroidProcessMatrix,
+  sampleProcessMatrix,
+  runtimeCapabilities,
   findIosSimulatorProcess,
   parseHostPsSample,
+  parseElapsedSeconds,
+  parseAndroidCpuInfo,
   getIosSimulatorAppExecutable
 };
