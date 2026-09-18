@@ -28,7 +28,7 @@ function event(overrides = {}) {
 test('NativeLogSession defaults to app-scoped searches and preserves stable ids', () => {
   const session = new NativeLogSession();
   session.push(event({ id: 'app-error', level: 'error', message: 'upload socket timeout' }));
-  session.push(event({ id: 'system-error', process: 'system_server', package: 'Android System', level: 'error', message: 'unrelated failure' }));
+  session.push(event({ id: 'system-error', process: 'system_server', package: 'Android System', app: 'com.example.app', level: 'error', message: 'unrelated failure' }));
 
   const app = { name: 'Example', bundleId: 'com.example.app', primaryProcess: 'com.example.app' };
   const result = session.search({ levels: ['error'] }, app);
@@ -64,6 +64,23 @@ test('NativeLogSession groups repeated native errors and crash signals', () => {
   assert.equal(result.totalErrorMatches, 3);
   assert.equal(result.groups.some((group) => group.count === 2), true);
   assert.equal(result.groups.some((group) => group.crashSignal === true), true);
+});
+
+test('error grouping scans the full captured session instead of only the first 500 errors', () => {
+  const session = new NativeLogSession();
+  const app = { bundleId: 'com.example.app', primaryProcess: 'com.example.app' };
+
+  for (let index = 0; index < 550; index += 1) {
+    session.push(event({
+      id: `bulk-${index}`,
+      level: 'error',
+      message: `Repeated native failure request ${100000 + index}`
+    }));
+  }
+
+  const result = session.errorGroups({ scope: 'app', limit: 5 }, app);
+  assert.equal(result.totalErrorMatches, 550);
+  assert.equal(result.groups[0].count, 550);
 });
 
 test('NativeLogSession stores runtime telemetry separately from searchable logs', () => {
@@ -110,6 +127,10 @@ test('dashboard observability API is consumable by MCP DashboardClient', async (
   assert.equal((await client.errorGroups()).totalErrorMatches, 1);
   assert.equal((await client.runtime('com.example.app')).fps, 60);
 
+  const clearResponse = await fetch(new URL('/api/clear', dashboard.url), { method: 'POST' });
+  assert.equal(clearResponse.ok, true);
+  assert.equal((await client.stats()).totalCaptured, 0);
+
   await dashboard.close();
 });
 
@@ -132,4 +153,6 @@ test('MCP server source registers evidence-first tools, resources, and prompt', 
   assert.match(source, /rnnd:\/\/errors\/recent/);
   assert.match(source, /diagnose-native-issue/);
   assert.match(source, /StdioServerTransport/);
+  assert.match(source, /readOnlyHint:\s*true/);
+  assert.match(source, /Call native_debugger_status first/);
 });
