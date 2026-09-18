@@ -1,5 +1,3 @@
-import { MAX_BUFFER, trimRetainedBuffer } from './retention.mjs';
-
 function sourceName(event) {
   return event.package || event.integration || event.subsystem || event.tag || 'Unknown';
 }
@@ -98,7 +96,6 @@ export class NativeLogStore {
 
   push(event) {
     this.buffer.unshift(event);
-    trimRetainedBuffer(this.buffer, MAX_BUFFER);
     this.updateFacets(event);
     this.scheduleLogs();
   }
