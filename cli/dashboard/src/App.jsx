@@ -688,6 +688,7 @@ export default function App() {
       } else if (event.key.toLowerCase() === 'c') {
         logStore.clear();
         setSelectedRow(null);
+        fetch('/api/clear', { method: 'POST' }).catch(() => {});
       } else if (event.key === '/') {
         event.preventDefault();
         searchRef.current?.focus();
@@ -766,6 +767,7 @@ export default function App() {
   const clear = () => {
     logStore.clear();
     setSelectedRow(null);
+    fetch('/api/clear', { method: 'POST' }).catch(() => {});
   };
 
   const exportRows = () => {
