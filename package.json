@@ -1,6 +1,6 @@
 {
   "name": "react-native-native-debugger",
-  "version": "0.7.0-observability.3",
+  "version": "0.8.0-mcp.0",
   "description": "Dev-only native debugging toolkit for React Native with native log/error bridging and host-side Android/iOS log streaming.",
   "main": "index.js",
   "types": "index.d.ts",
@@ -16,7 +16,11 @@
     "ios",
     "rnfs",
     "blob-util",
-    "background-downloader"
+    "background-downloader",
+    "mcp",
+    "model-context-protocol",
+    "llm",
+    "observability"
   ],
   "files": [
     "index.js",
@@ -44,7 +48,8 @@
     "logs": "node cli/index.js logs",
     "dashboard:dev": "vite --config cli/dashboard/vite.config.mjs",
     "dashboard:build": "vite build --config cli/dashboard/vite.config.mjs",
-    "prepack": "yarn dashboard:build"
+    "prepack": "yarn dashboard:build",
+    "mcp": "node cli/index.js mcp"
   },
   "peerDependencies": {
     "react": "*",
@@ -76,5 +81,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
   }
 }
