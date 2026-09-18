@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { createSessionInfo, sampleMetrics, parseHostPsSample } = require('../cli/logs/telemetry');
+const { createSessionInfo, sampleMetrics, parseHostPsSample, parseElapsedSeconds, parseAndroidCpuInfo, runtimeCapabilities } = require('../cli/logs/telemetry');
 
 test('createSessionInfo returns app and device metadata without app-specific rules', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rnnd-telemetry-'));
@@ -59,6 +59,7 @@ test('dashboard exposes session and per-process metrics endpoints', async () => 
   const dashboard = await startDashboard({ host: '127.0.0.1', port: 0, open: false });
   dashboard.setSessionProvider(() => ({ app: { name: 'ExampleApp' } }));
   dashboard.setMetricsProvider((processName) => ({ available: true, process: processName, memoryBytes: 1234 }));
+  dashboard.setProcessMetricsProvider(() => [{ process: 'ExampleApp', pid: 42, memoryBytes: 4096, cpuPercent: 3.5 }]);
 
   const port = new URL(dashboard.url).port;
   const get = (pathname) => new Promise((resolve, reject) => {
@@ -73,6 +74,10 @@ test('dashboard exposes session and per-process metrics endpoints', async () => 
   const metrics = await get('/metrics?process=ExampleApp');
   assert.equal(metrics.process, 'ExampleApp');
   assert.equal(metrics.memoryBytes, 1234);
+  const matrix = await get('/process-metrics');
+  assert.equal(matrix.length, 1);
+  assert.equal(matrix[0].pid, 42);
+  assert.equal(matrix[0].cpuPercent, 3.5);
 
   await dashboard.close();
 });
@@ -82,4 +87,24 @@ test('parseHostPsSample parses macOS ps RSS and CPU columns', () => {
   assert.deepEqual(parseHostPsSample('  184320   12.5'), { rssKb: 184320, cpuPercent: 12.5 });
   assert.equal(parseHostPsSample(''), null);
   assert.equal(parseHostPsSample('garbage'), null);
+});
+
+
+test('process matrix helper parsers normalize elapsed time and Android cpuinfo', () => {
+  assert.equal(parseElapsedSeconds('01:02'), 62);
+  assert.equal(parseElapsedSeconds('1-02:03:04'), 93784);
+  const cpu = parseAndroidCpuInfo('  12.5% 7443/com.example.app: 8% user + 4.5% kernel\n');
+  assert.equal(cpu.get(7443).process, 'com.example.app');
+  assert.equal(cpu.get(7443).cpuPercent, 12.5);
+});
+
+test('runtime capabilities distinguish host process telemetry from native-only signals', () => {
+  const ios = runtimeCapabilities({ platform: 'ios' });
+  assert.equal(ios.processMatrix, true);
+  assert.equal(ios.processMemory, true);
+  assert.equal(ios.fps, 'requires-native-runtime');
+
+  const physical = runtimeCapabilities({ platform: 'ios-device' });
+  assert.equal(physical.processMatrix, false);
+  assert.equal(physical.nativeRuntimeTelemetry, true);
 });
