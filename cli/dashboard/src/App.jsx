@@ -288,6 +288,7 @@ const Header = memo(function Header({ connected, paused, onPause, onClear, onExp
       </div>
 
       <div className="header-actions">
+        <a className="mcp-nav-link" href="/mcp">MCP</a>
         <div className="stream-pill">
           <span className={connected && !paused ? 'live-label' : 'paused-label'}>● {paused ? 'PAUSED' : connected ? 'LIVE' : 'OFFLINE'}</span>
           <span>·</span><strong>{logStats.logsPerSecond.toFixed(1)}/s</strong>
@@ -561,7 +562,178 @@ function Inspector({ session, runtime, selectedRow, processRows, onQuickFilter, 
   );
 }
 
-export default function App() {
+
+function CopyBlock({ label, children }) {
+  const [copied, setCopied] = useState(false);
+  const textValue = typeof children === 'string' ? children : '';
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(textValue);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  };
+  return (
+    <div className="mcp-code-block">
+      <div className="mcp-code-head"><span>{label}</span><button type="button" onClick={copy}>{copied ? 'COPIED' : 'COPY'}</button></div>
+      <pre>{children}</pre>
+    </div>
+  );
+}
+
+function MCPPage() {
+  const dashboardUrl = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:9876';
+  const openCodeCommand = `opencode mcp add rn-native-debugger -- \\\n  npx rn-native-debugger mcp \\\n  --connect ${dashboardUrl}`;
+  const openCodeGlobalCommand = `opencode mcp add rn-native-debugger --global -- \\\n  npx rn-native-debugger mcp \\\n  --connect ${dashboardUrl}`;
+  const codexCommand = `codex mcp add rn-native-debugger -- \\\n  npx rn-native-debugger mcp \\\n  --connect ${dashboardUrl}`;
+  const androidCommand = 'npx rn-native-debugger logs --platform android';
+  const iosCommand = 'npx rn-native-debugger logs --ios-simulator';
+
+  const tools = [
+    ['native_debugger_status', 'App/device/session health, captured-log statistics and runtime telemetry.'],
+    ['search_native_logs', 'Search the full captured session by severity, process, package, service, subsystem, tag and text.'],
+    ['get_native_log_context', 'Reconstruct the chronological native log sequence around a stable log id.'],
+    ['get_recent_native_errors', 'Group repeated native error/fatal/crash signals and return sample log ids.'],
+    ['list_native_processes', 'Read observed processes with CPU/RAM metrics and captured-log activity.'],
+    ['get_runtime_telemetry', 'Read measured memory, CPU, FPS, threads, thermal, battery and heap data when available.'],
+    ['get_network_evidence', 'Read real CFNetwork / Network.framework / OkHttp / TLS / QUIC / socket evidence from native logs.']
+  ];
+
+  return (
+    <div className="mcp-docs-page">
+      <header className="mcp-docs-header">
+        <a className="mcp-brand" href="/"><span className="brand-mark">RN</span><strong>native-debugger</strong></a>
+        <nav><a href="/">Dashboard</a><a className="active" href="/mcp">MCP</a></nav>
+        <div className="mcp-header-badge"><i className="dot green" /> LOCAL · STDIO · READ ONLY</div>
+      </header>
+
+      <main className="mcp-docs-shell">
+        <section className="mcp-hero">
+          <div className="mcp-eyebrow">MODEL CONTEXT PROTOCOL</div>
+          <h1>Let your coding agent inspect the same native evidence you see.</h1>
+          <p>
+            Connect OpenCode, Codex, or another MCP client to the active React Native Native Debugger session.
+            The model can search captured native logs, inspect exact failure context, correlate process telemetry,
+            and reason from real Android/iOS evidence without starting another collector.
+          </p>
+          <div className="mcp-hero-actions">
+            <a href="#quick-start">Quick start</a>
+            <a className="secondary" href="#tools">Explore tools</a>
+          </div>
+        </section>
+
+        <section className="mcp-flow">
+          <div><b>01</b><strong>Native runtime</strong><span>adb logcat / Unified Logging</span></div>
+          <i>→</i>
+          <div><b>02</b><strong>Debugger session</strong><span>Dashboard + server-side history</span></div>
+          <i>→</i>
+          <div><b>03</b><strong>MCP adapter</strong><span>Local stdio process</span></div>
+          <i>→</i>
+          <div><b>04</b><strong>Coding agent</strong><span>Evidence-first diagnosis</span></div>
+        </section>
+
+        <section className="mcp-section" id="quick-start">
+          <div className="mcp-section-heading">
+            <span>01</span>
+            <div><h2>Start the debugger session</h2><p>The MCP adapter connects to an already-running native log session.</p></div>
+          </div>
+          <div className="mcp-grid two">
+            <CopyBlock label="ANDROID">{androidCommand}</CopyBlock>
+            <CopyBlock label="IOS SIMULATOR">{iosCommand}</CopyBlock>
+          </div>
+          <div className="mcp-callout">
+            <i className="dot cyan" />
+            <div>
+              <strong>Keep this process running.</strong>
+              <span>Default local session endpoint: <code>{dashboardUrl}</code></span>
+            </div>
+          </div>
+        </section>
+
+        <section className="mcp-section">
+          <div className="mcp-section-heading">
+            <span>02</span>
+            <div><h2>Connect OpenCode</h2><p>Add the local stdio server from your React Native project.</p></div>
+          </div>
+          <CopyBlock label="OPENCODE · PROJECT">{openCodeCommand}</CopyBlock>
+          <div className="mcp-grid two compact">
+            <CopyBlock label="VERIFY">{'opencode mcp list'}</CopyBlock>
+            <CopyBlock label="GLOBAL">{openCodeGlobalCommand}</CopyBlock>
+          </div>
+          <div className="mcp-example-prompt">
+            <span>EXAMPLE PROMPT</span>
+            <p>Use rn-native-debugger to inspect my current React Native app. Find the most important native errors, inspect their surrounding log context, and correlate them with CPU/RAM/FPS and network evidence.</p>
+          </div>
+        </section>
+
+        <section className="mcp-section">
+          <div className="mcp-section-heading">
+            <span>03</span>
+            <div><h2>Connect Codex CLI</h2><p>Codex launches the same local MCP adapter as a stdio child process.</p></div>
+          </div>
+          <CopyBlock label="CODEX CLI">{codexCommand}</CopyBlock>
+          <div className="mcp-grid two compact">
+            <CopyBlock label="VERIFY">{'codex mcp list'}</CopyBlock>
+            <CopyBlock label="CODEX TUI">{'/mcp'}</CopyBlock>
+          </div>
+          <div className="mcp-example-prompt">
+            <span>EXAMPLE PROMPT</span>
+            <p>Use the rn-native-debugger MCP tools to diagnose why the latest upload failed. Start with app-scoped errors, inspect surrounding native log context, then expand to system/network processes only when the evidence points there.</p>
+          </div>
+        </section>
+
+        <section className="mcp-section" id="tools">
+          <div className="mcp-section-heading">
+            <span>04</span>
+            <div><h2>Available MCP tools</h2><p>All tools are read-only and operate on captured evidence or measured telemetry.</p></div>
+          </div>
+          <div className="mcp-tool-grid">
+            {tools.map(([name, description]) => (
+              <article key={name} className="mcp-tool-card">
+                <code>{name}</code>
+                <p>{description}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="mcp-section">
+          <div className="mcp-section-heading">
+            <span>05</span>
+            <div><h2>How diagnosis should work</h2><p>The MCP server is deliberately evidence-first.</p></div>
+          </div>
+          <div className="mcp-diagnosis-flow">
+            {['status', 'error groups', 'exact log context', 'source/process search', 'network evidence', 'runtime telemetry', 'facts vs inference', 'fix actions'].map((item, index) => (
+              <React.Fragment key={item}>
+                <span>{item}</span>{index < 7 && <i>→</i>}
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="mcp-safety-grid">
+            <article><strong>APP SCOPE FIRST</strong><p>Log/error searches start with the detected React Native app. Expand to all processes only for daemon, permission, OS, or network correlation.</p></article>
+            <article><strong>STABLE LOG IDS</strong><p>Search results can be reopened with chronological context so the model can inspect what happened before and after a failure.</p></article>
+            <article><strong>NO SYNTHETIC EVIDENCE</strong><p>Missing stack frames, package attribution, HTTP details, telemetry, or root causes are never fabricated by the server.</p></article>
+            <article><strong>LOCAL BY DEFAULT</strong><p>The dashboard stays on loopback and MCP uses local stdio. No remote AI service is embedded in the release app.</p></article>
+          </div>
+        </section>
+
+        <section className="mcp-section">
+          <div className="mcp-section-heading">
+            <span>06</span>
+            <div><h2>MCP resources</h2><p>Clients that consume resources can attach live debugger context directly.</p></div>
+          </div>
+          <div className="mcp-resource-list">
+            <code>rnnd://session</code>
+            <code>rnnd://errors/recent</code>
+            <code>rnnd://runtime/main</code>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function DashboardApp() {
   const logRevision = useSyncExternalStore(logStore.subscribeLogs, logStore.getLogRevision, logStore.getLogRevision);
   const [connected, setConnected] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -815,4 +987,11 @@ export default function App() {
       </footer>
     </div>
   );
+}
+
+
+export default function App() {
+  const path = typeof window !== 'undefined' ? window.location.pathname.replace(/\/+$/, '') || '/' : '/';
+  if (path === '/mcp') return <MCPPage />;
+  return <DashboardApp />;
 }
