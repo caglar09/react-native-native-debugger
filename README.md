@@ -2,10 +2,11 @@
 
 Dev-only **native debugging toolkit** for React Native.
 
-It has two complementary layers:
+It has three complementary layers:
 
 1. A host-side native log collector that shows real Android `adb logcat` and iOS logging output in a local browser dashboard, including logs from packages that have no debugger integration.
-2. Optional source-patch integrations for selected libraries that mirror upstream native logs into React Native DevTools Console and surface real caught/swallowed native errors.
+2. An optional local **Model Context Protocol (MCP)** server that exposes the captured native-log session, error groups, process metrics, runtime telemetry, and network evidence to an LLM/MCP client.
+3. Optional source-patch integrations for selected libraries that mirror upstream native logs into React Native DevTools Console and surface real caught/swallowed native errors.
 
 The core rule is simple: **the debugger does not invent normal-operation lifecycle events.** An `output.write(...)`, request start, progress callback, or file move does not become a debugger event just because it might be useful. Existing native logs are collected or mirrored; real failures are surfaced.
 
@@ -96,6 +97,222 @@ Android device/emulator                    iOS Simulator / device
 ```
 
 This layer is intentionally independent of React Native JS and the app process's NativeModule bridge. It therefore remains useful for debugging native libraries before JS listeners are installed or when a library does not have a dedicated debugger integration.
+
+## MCP server — diagnose native logs with an LLM
+
+The debugger can expose the **same live native-log session** to any MCP client.
+
+The MCP server does not contain or call an LLM itself. It exposes evidence through Model Context Protocol; the MCP client/model performs the reasoning.
+
+The recommended architecture is:
+
+```text
+Android / iOS runtime
+        |
+ native OS logging
+        |
+rn-native-debugger logs
+        |
+        +-------------------- browser dashboard
+        |
+        +---- server-side live session store
+                    |
+             local HTTP API
+                    |
+          rn-native-debugger mcp
+             (stdio MCP)
+                    |
+          MCP-capable LLM client
+                    |
+     "Why did my upload fail?"
+```
+
+This avoids starting a second `adb logcat` / Unified Logging collector just for the LLM. The dashboard and MCP server query the same captured session.
+
+### 1. Start native log collection
+
+Android:
+
+```bash
+npx rn-native-debugger logs --platform android
+```
+
+iOS Simulator:
+
+```bash
+npx rn-native-debugger logs --ios-simulator
+```
+
+Keep that process running. The default dashboard/session endpoint is:
+
+```text
+http://127.0.0.1:9876
+```
+
+The host process now retains the captured session for both the browser dashboard and MCP queries. An MCP client may connect later and still inspect logs captured earlier in that same `logs` session.
+
+### 2. Configure an MCP client
+
+Use the client-specific MCP configuration format to launch:
+
+```bash
+npx rn-native-debugger mcp --connect http://127.0.0.1:9876
+```
+
+A common stdio MCP configuration shape is:
+
+```json
+{
+  "mcpServers": {
+    "react-native-native-debugger": {
+      "command": "npx",
+      "args": [
+        "rn-native-debugger",
+        "mcp",
+        "--connect",
+        "http://127.0.0.1:9876"
+      ]
+    }
+  }
+}
+```
+
+If the dashboard uses another host/port, point `--connect` at it.
+
+The MCP process uses **stdio** for the protocol, so it is normally launched by the MCP client rather than kept in a separate interactive terminal.
+
+### MCP tools
+
+The server is intentionally read-only. It cannot mutate the application, execute arbitrary shell commands, clear logs, kill processes, or change device state.
+
+| Tool | Purpose |
+| --- | --- |
+| `native_debugger_status` | Read current app/device/Metro/collector state, log statistics, and latest runtime telemetry. The model should normally call this first. |
+| `search_native_logs` | Search the complete captured session by text, level, process, package, service, subsystem, tag, time window, and order. |
+| `get_native_log_context` | Retrieve chronological logs immediately before/after one stable log id. Useful for reconstructing failure sequences. |
+| `get_recent_native_errors` | Group real error/fatal/crash-signal logs by normalized signature and return sample log ids. |
+| `list_native_processes` | Return observed processes with CPU/RAM telemetry when available and merge their captured-log counts. |
+| `get_runtime_telemetry` | Read real host/native metrics such as memory, CPU, FPS, threads, thermal state, battery, heaps, or traffic counters when available. |
+| `get_network_evidence` | Search real CFNetwork/Network.framework/OkHttp/TLS/QUIC/socket evidence emitted into the native logs. |
+
+`search_native_logs` and the error tools default to:
+
+```text
+scope = app
+```
+
+This keeps the model focused on the current React Native application first.
+
+When the failure may involve a related system process, network daemon, permission service, or OS subsystem, the model can explicitly request:
+
+```text
+scope = all
+```
+
+App scoping is based on the detected application/bundle id and primary process. If the application identity cannot be determined, the response explicitly reports that the requested app scope could not be applied rather than pretending the records were app-only.
+
+### MCP resources
+
+The server also exposes read-only resources:
+
+```text
+rnnd://session
+rnnd://errors/recent
+rnnd://runtime/main
+```
+
+These are useful for MCP clients that prefer resources as persistent context rather than explicit tool calls.
+
+### Diagnostic prompt
+
+The MCP server registers:
+
+```text
+diagnose-native-issue
+```
+
+This prompt guides the model through an evidence-first debugging workflow:
+
+```text
+status
+  ↓
+error groups
+  ↓
+log context around sample ids
+  ↓
+source/package/process-specific search
+  ↓
+network evidence when relevant
+  ↓
+CPU / RAM / FPS / process telemetry
+  ↓
+observed facts vs inference
+  ↓
+likely causes + next debugging actions
+```
+
+It explicitly tells the model not to invent missing stack frames, HTTP metadata, source attribution, or root causes.
+
+### Example questions for an MCP-connected LLM
+
+```text
+Why did the last native upload fail?
+```
+
+```text
+Find the errors emitted by react-native-blob-util in the last 5 minutes,
+show the surrounding native logs, and explain the strongest likely cause.
+```
+
+```text
+My app freezes while processing a 400 MB file.
+Check app RAM/CPU/FPS telemetry and native errors around the spike.
+```
+
+```text
+Search the whole device scope for network/TLS evidence related to the
+app's ECONNRESET errors and distinguish app logs from OS daemon logs.
+```
+
+### MCP data model and evidence rules
+
+Each captured log keeps a stable session id. Search results therefore give the LLM a concrete id that can be passed back to `get_native_log_context`.
+
+The server does deterministic work only:
+
+- application/process scoping
+- native log filtering/search
+- error signature grouping
+- crash-signal pattern detection
+- process/log-count correlation
+- extraction of network evidence already present in the native log
+- exposure of measured runtime telemetry
+
+The model is responsible for diagnosis and interpretation.
+
+A `crashSignal: true` value means the captured native text matched a real fatal/crash pattern. It is **not** an independently invented crash diagnosis.
+
+### MCP privacy and local access
+
+The MCP server exposes whatever the native platform log stream contains. Native logs can contain URLs, identifiers, paths, request metadata, or other application-specific information.
+
+The recommended setup keeps both components on loopback:
+
+```text
+Dashboard/API: 127.0.0.1:9876
+MCP:           local stdio child process
+```
+
+Do not bind the dashboard to a public interface unless that exposure is intentional.
+
+The MCP integration is a development-time feature. It does not add an LLM or remote AI service to the release application.
+
+MCP options:
+
+```text
+--connect <dashboard-url>   default: http://127.0.0.1:9876
+--mcp-timeout <ms>         dashboard request timeout, default: 5000
+```
 
 ## Supported source-patch integrations
 
@@ -668,6 +885,7 @@ subscription.remove();
 
 ```bash
 npx rn-native-debugger logs
+npx rn-native-debugger mcp --connect http://127.0.0.1:9876
 npx rn-native-debugger doctor
 npx rn-native-debugger patch
 npx rn-native-debugger status
@@ -763,6 +981,9 @@ node --check cli/logs/index.js
 node --check cli/logs/collectors.js
 node --check cli/logs/dashboard.js
 node --check cli/logs/parser.js
+node --check cli/logs/session-store.js
+node --check cli/mcp/index.js
+node --check cli/mcp/dashboard-client.js
 ruby -c react-native-native-debugger.podspec
 npm pack --dry-run
 ```
