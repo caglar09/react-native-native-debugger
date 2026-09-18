@@ -2,30 +2,38 @@ import React, { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { levelName, logStore, serviceName, sourceName } from './store';
 
-const LIMITS = [10, 20, 50, 100, 500, 1000, 5000];
-const SPEEDS = [[80, 'Realtime'], [250, '250 ms'], [500, '500 ms'], [1000, '1 s'], [2000, '2 s']];
-const METRIC_HISTORY = 180;
-
-function matches(event, filters) {
-  if (filters.processes.size && !filters.processes.has(event.process || '')) return false;
-  if (filters.level && levelName(event) !== filters.level) return false;
-  if (filters.package && sourceName(event) !== filters.package) return false;
-  if (filters.service && serviceName(event) !== filters.service) return false;
-  if (!filters.search) return true;
-  return JSON.stringify(event).toLowerCase().includes(filters.search.toLowerCase());
-}
+const LIMITS = [50, 100, 250, 500, 1000, 5000];
+const SPEEDS = [[80, 'Realtime'], [250, '250ms'], [500, '500ms'], [1000, '1s'], [2000, '2s']];
+const NETWORK_RE = /CFNetwork|com\.apple\.network|network\.framework|\bnw_|okhttp|\bTLS\b|\bQUIC\b|https?:\/\/|socket|connection/i;
+const CRASH_RE = /FATAL EXCEPTION|SIG(?:ABRT|SEGV|BUS|ILL|TRAP)|uncaught exception|terminating app|out of memory|\bOOM\b|\bANR\b|fatal error/i;
 
 function formatBytes(value) {
-  if (!Number.isFinite(value) || value <= 0) return '—';
-  const units = ['B', 'KB', 'MB', 'GB'];
+  if (!Number.isFinite(value) || value < 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let amount = value;
   let index = 0;
   while (amount >= 1024 && index < units.length - 1) { amount /= 1024; index += 1; }
   return `${amount >= 100 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
 }
 
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds)) return '—';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function shortTime(row) {
+  const timestamp = String(row.timestamp || '');
+  const match = timestamp.match(/(\d\d:\d\d:\d\d\.\d+)/);
+  if (match) return match[1];
+  return new Date(row.receivedAt || Date.now()).toLocaleTimeString([], { hour12: false });
+}
+
 function download(data, format, suffix) {
-  const body = format === 'ndjson' ? data.map((item) => JSON.stringify(item)).join('\n') : JSON.stringify(data, null, 2);
+  const body = format === 'ndjson'
+    ? data.map((item) => JSON.stringify(item)).join('\n')
+    : JSON.stringify(data, null, 2);
   const blob = new Blob([body], { type: format === 'ndjson' ? 'application/x-ndjson' : 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -35,34 +43,90 @@ function download(data, format, suffix) {
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
-const Sparkline = memo(function Sparkline({ values, suffix = '', precision = 0 }) {
-  const data = values.filter((value) => Number.isFinite(value));
-  const latest = data.length ? data[data.length - 1] : null;
-  const max = Math.max(1, ...data);
-  const min = Math.min(0, ...data);
-  const range = Math.max(1, max - min);
-  const points = data.map((value, index) => {
-    const x = data.length <= 1 ? 100 : (index / (data.length - 1)) * 100;
-    const y = 34 - ((value - min) / range) * 30;
-    return `${x},${y}`;
-  }).join(' ');
-  return (
-    <div className="sparkline-wrap">
-      <svg viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">
-        <polyline points={points} fill="none" vectorEffect="non-scaling-stroke" />
-      </svg>
-      <div className="sparkline-value">{latest == null ? '—' : `${latest.toFixed(precision)}${suffix}`}</div>
-    </div>
-  );
-});
+function eventHaystack(row) {
+  return [
+    row.message, row.raw, row.process, row.pid, row.package, row.service, row.subsystem,
+    row.category, row.tag, row.className, row.method, row.file,
+    row.network?.url, row.network?.endpoint, row.network?.protocol, row.network?.errorCode
+  ].filter(Boolean).join(' ').toLowerCase();
+}
 
-const InfoRow = memo(function InfoRow({ label, value, mono = false }) {
-  return <div className="info-row"><span>{label}</span><strong className={mono ? 'mono' : ''}>{value || '—'}</strong></div>;
-});
+function tokenizeQuery(query) {
+  const tokens = [];
+  String(query || '').replace(/"([^"]+)"|'([^']+)'|(\S+)/g, (_, doubleQuoted, singleQuoted, bare) => {
+    tokens.push(doubleQuoted || singleQuoted || bare);
+    return '';
+  });
+  return tokens;
+}
 
-const PanelCard = memo(function PanelCard({ title, children, className = '' }) {
-  return <section className={`panel-card ${className}`}><div className="panel-title">{title}</div>{children}</section>;
-});
+function queryMatches(row, query) {
+  const tokens = tokenizeQuery(query);
+  if (!tokens.length) return true;
+  const haystack = eventHaystack(row);
+
+  for (const token of tokens) {
+    const separator = token.indexOf(':');
+    if (separator <= 0) {
+      if (!haystack.includes(token.toLowerCase())) return false;
+      continue;
+    }
+
+    const key = token.slice(0, separator).toLowerCase();
+    const value = token.slice(separator + 1).toLowerCase();
+    if (!value) continue;
+
+    if ((key === 'is' || key === 'level') && levelName(row).toLowerCase() !== value) return false;
+    else if (key === 'process' && !String(row.process || '').toLowerCase().includes(value)) return false;
+    else if (key === 'pid' && String(row.pid || '') !== value) return false;
+    else if ((key === 'package' || key === 'source') && !sourceName(row).toLowerCase().includes(value)) return false;
+    else if (key === 'service' && !serviceName(row).toLowerCase().includes(value)) return false;
+    else if (key === 'subsystem' && !String(row.subsystem || '').toLowerCase().includes(value)) return false;
+    else if (key === 'tag' && !String(row.tag || '').toLowerCase().includes(value)) return false;
+    else if (key === 'category' && !String(row.category || '').toLowerCase().includes(value)) return false;
+    else if (key === 'network' && value !== 'false' && !isNetworkEvent(row)) return false;
+    else if (!['is', 'level', 'process', 'pid', 'package', 'source', 'service', 'subsystem', 'tag', 'category', 'network'].includes(key) && !haystack.includes(token.toLowerCase())) return false;
+  }
+  return true;
+}
+
+function facetMatches(row, filters) {
+  if (filters.processes.size && !filters.processes.has(row.process || '')) return false;
+  if (filters.level && levelName(row) !== filters.level) return false;
+  if (filters.package && sourceName(row) !== filters.package) return false;
+  if (filters.service && serviceName(row) !== filters.service) return false;
+  return true;
+}
+
+function isNetworkEvent(row) {
+  if (row.network) return true;
+  return NETWORK_RE.test(eventHaystack(row));
+}
+
+function isCrashEvent(row) {
+  return levelName(row) === 'fatal' || CRASH_RE.test(eventHaystack(row));
+}
+
+function anomalySignature(row) {
+  const message = String(row.message || row.raw || 'Unknown error')
+    .replace(/0x[0-9a-f]+/gi, '0x…')
+    .replace(/\b\d{4,}\b/g, '#')
+    .slice(0, 180);
+  return `${levelName(row)}|${row.process || 'Unknown'}|${sourceName(row)}|${message}`;
+}
+
+function runtimeForProcess(nativeRuntime, metric) {
+  if (!nativeRuntime?.available) return metric || null;
+  const runtimeName = String(nativeRuntime.process || '').toLowerCase();
+  const metricName = String(metric?.process || '').toLowerCase();
+  if (metric && runtimeName && metricName && runtimeName !== metricName) return metric;
+  return {
+    ...(metric || {}),
+    ...nativeRuntime,
+    memoryBytes: nativeRuntime.residentMemoryBytes ?? metric?.memoryBytes,
+    memoryKind: nativeRuntime.memoryKind ?? metric?.memoryKind
+  };
+}
 
 const SearchableFacet = memo(function SearchableFacet({ value, onChange, label, values }) {
   const [open, setOpen] = useState(false);
@@ -76,36 +140,24 @@ const SearchableFacet = memo(function SearchableFacet({ value, onChange, label, 
   }, []);
 
   const normalized = query.trim().toLowerCase();
-  const filtered = normalized
-    ? values.filter((item) => String(item).toLowerCase().includes(normalized))
-    : values;
+  const filtered = normalized ? values.filter((item) => String(item).toLowerCase().includes(normalized)) : values;
 
   return (
     <div className="facet-picker" ref={ref}>
-      <button type="button" onClick={() => setOpen((current) => !current)} title={value || label}>
-        {value || label}
+      <button type="button" className={value ? 'facet-trigger active' : 'facet-trigger'} onClick={() => setOpen((current) => !current)} title={value || label}>
+        {value || label}<span>⌄</span>
       </button>
       {open && (
         <div className="facet-menu">
-          <input
-            autoFocus
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={`Search ${label.replace(/^All /, '').toLowerCase()}…`}
-          />
-          <button className="facet-all" type="button" onClick={() => { onChange(''); setOpen(false); }}>All</button>
+          <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${label.toLowerCase()}…`} />
+          <button type="button" className="facet-option all" onClick={() => { onChange(''); setOpen(false); }}>All {label.toLowerCase()}</button>
           <div className="facet-options">
             {filtered.map((item) => (
-              <button
-                type="button"
-                className={value === item ? 'facet-option selected' : 'facet-option'}
-                key={item}
-                onClick={() => { onChange(item); setOpen(false); }}
-              >
+              <button type="button" className={value === item ? 'facet-option selected' : 'facet-option'} key={item} onClick={() => { onChange(item); setOpen(false); }}>
                 {item}
               </button>
             ))}
-            {!filtered.length && <div className="process-empty">No matches.</div>}
+            {!filtered.length && <div className="empty-mini">No matches</div>}
           </div>
         </div>
       )}
@@ -117,241 +169,406 @@ const ProcessPicker = memo(function ProcessPicker({ values, selected, onChange }
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const ref = useRef(null);
+
   useEffect(() => {
     const handler = (event) => { if (!ref.current?.contains(event.target)) setOpen(false); };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const normalized = query.trim().toLowerCase();
+  const filtered = normalized ? values.filter((name) => String(name).toLowerCase().includes(normalized)) : values;
   const toggle = (name) => {
     const next = new Set(selected);
     if (next.has(name)) next.delete(name); else next.add(name);
     onChange(next);
   };
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredValues = normalizedQuery
-    ? values.filter((name) => String(name).toLowerCase().includes(normalizedQuery))
-    : values;
 
   return (
-    <div className="process-picker" ref={ref}>
-      <button type="button" onClick={() => setOpen((value) => !value)}>
-        {selected.size ? `${selected.size} process${selected.size === 1 ? '' : 'es'}` : 'All processes'}
+    <div className="facet-picker" ref={ref}>
+      <button type="button" className={selected.size ? 'facet-trigger active' : 'facet-trigger'} onClick={() => setOpen((current) => !current)}>
+        {selected.size ? `${selected.size} process` : 'Processes'}<span>⌄</span>
       </button>
       {open && (
-        <div className="process-menu">
-          <div className="process-menu-head"><strong>Processes</strong><button type="button" onClick={() => onChange(new Set())}>All</button></div>
-          <input className="facet-search" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search processes…" />
-          {!filteredValues.length && <div className="process-empty">{values.length ? 'No matches.' : 'No process information yet.'}</div>}
-          {filteredValues.map((name) => (
-            <label key={name} className="process-option">
-              <input type="checkbox" checked={selected.has(name)} onChange={() => toggle(name)} />
-              <span>{name}</span>
-            </label>
-          ))}
+        <div className="facet-menu process-popover">
+          <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search processes…" />
+          <button type="button" className="facet-option all" onClick={() => onChange(new Set())}>All processes</button>
+          <div className="facet-options">
+            {filtered.map((name) => (
+              <label key={name} className="process-check">
+                <input type="checkbox" checked={selected.has(name)} onChange={() => toggle(name)} />
+                <span>{name}</span>
+              </label>
+            ))}
+            {!filtered.length && <div className="empty-mini">No matches</div>}
+          </div>
         </div>
       )}
     </div>
   );
 });
 
-const Header = memo(function Header({ connected, paused, onPause, onClear, visibleCount, bufferedCount, selectedCount, selectedIds, filteredRows, activeRows, session }) {
-  const platform = session?.device?.platform === 'android' ? 'Android' : session?.device?.platform === 'ios' ? 'iOS' : 'Unknown platform';
+const ProcessCard = memo(function ProcessCard({ item, onIsolate }) {
+  const hasErrors = item.errors > 0;
   return (
-    <header className="topbar">
-      <div className="brand-cluster">
+    <button className={`process-card ${item.isMainApp ? 'main-app' : ''} ${hasErrors ? 'has-errors' : ''}`} onClick={() => onIsolate(item.process)}>
+      <div className="process-card-top">
+        <div className="process-name"><i className={item.isMainApp ? 'dot cyan' : hasErrors ? 'dot rose' : 'dot green'} />{item.process || 'Unknown'}</div>
+        <span className="process-pid">{item.pid ? `PID ${item.pid}` : 'PID —'}</span>
+      </div>
+      <div className="process-card-metrics">
+        <strong>{formatBytes(item.memoryBytes)}</strong>
+        <span>{Number.isFinite(item.cpuPercent) ? `${item.cpuPercent.toFixed(1)}% CPU` : 'CPU —'}</span>
+        {Number.isFinite(item.fps) && <span className="metric-accent">{item.fps.toFixed(0)} FPS</span>}
+      </div>
+      <div className="process-card-bottom">
+        <span>{(item.total || 0).toLocaleString()} logs{item.errors ? ` · ${item.errors} errors` : ''}</span>
+        <span className="isolate">Isolate →</span>
+      </div>
+    </button>
+  );
+});
+
+function mergeProcessData(processMetrics, processStats, session, nativeRuntime) {
+  const byName = new Map();
+
+  for (const metric of processMetrics || []) {
+    if (!metric?.process) continue;
+    byName.set(metric.process, { ...metric, total: 0, errors: 0, warnings: 0, fatal: 0 });
+  }
+  for (const stat of processStats || []) {
+    const current = byName.get(stat.process) || { process: stat.process };
+    byName.set(stat.process, { ...current, ...stat });
+  }
+
+  const mainName = session?.app?.primaryProcess || '';
+  if (mainName && !byName.has(mainName)) byName.set(mainName, { process: mainName, isMainApp: true, total: 0, errors: 0 });
+  if (nativeRuntime?.process && !byName.has(nativeRuntime.process)) byName.set(nativeRuntime.process, { process: nativeRuntime.process, total: 0, errors: 0 });
+
+  return [...byName.values()].map((item) => {
+    const runtime = runtimeForProcess(nativeRuntime, item);
+    return {
+      ...item,
+      ...(runtime || {}),
+      memoryBytes: runtime?.residentMemoryBytes ?? runtime?.memoryBytes ?? item.memoryBytes,
+      isMainApp: item.isMainApp || Boolean(mainName && item.process === mainName)
+    };
+  }).sort((a, b) =>
+    Number(b.isMainApp) - Number(a.isMainApp) ||
+    Number(b.errors || 0) - Number(a.errors || 0) ||
+    Number(b.total || 0) - Number(a.total || 0) ||
+    Number(b.cpuPercent || 0) - Number(a.cpuPercent || 0)
+  );
+}
+
+const Header = memo(function Header({ connected, paused, onPause, onClear, onExport, session, mainProcess, logStats, query, setQuery, searchRef }) {
+  const memory = mainProcess?.memoryBytes;
+  return (
+    <header className="workbench-header">
+      <div className="brand-zone">
         <div className="brand-mark">RN</div>
-        <div><div className="brand">Native Debugger</div><div className="brand-sub">{session?.app?.name || 'Runtime session'} · {platform}</div></div>
+        <div className="brand-name">native-debugger</div>
+        <div className="version-pill">workbench</div>
+        {mainProcess && (
+          <div className="target-pill">
+            <i className="dot green" />
+            <strong>{mainProcess.process}</strong>
+            <span>{mainProcess.pid ? `PID ${mainProcess.pid}` : ''}</span>
+            {Number.isFinite(mainProcess.fps) && <b>{mainProcess.fps.toFixed(0)} FPS</b>}
+          </div>
+        )}
       </div>
-      <div className="topbar-state">
-        <span className={paused || !connected ? 'status paused' : 'status live'}>● {paused ? 'PAUSED' : connected ? 'LIVE' : 'DISCONNECTED'}</span>
-        <span className="badge">{visibleCount} visible</span>
-        <span className="badge">{bufferedCount} captured</span>
-        <span className="badge">{selectedCount} selected</span>
+
+      <div className="command-bar">
+        <span className="command-icon">⌘</span>
+        <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter logs…  is:error process:app subsystem:network pid:1234" />
+        <kbd>⌘K</kbd>
       </div>
-      <div className="topbar-actions">
-        <button onClick={onPause}>{paused ? 'Resume' : 'Pause'}</button>
-        <button className="danger" onClick={onClear}>Clear</button>
-        <button disabled={!paused} onClick={() => download(filteredRows, 'json', 'filtered')}>JSON</button>
-        <button disabled={!paused} onClick={() => download(filteredRows, 'ndjson', 'filtered')}>NDJSON</button>
-        <button disabled={!paused || !selectedCount} onClick={() => download(activeRows.filter((row) => selectedIds.has(row.id)), 'json', 'selected')}>Selected</button>
+
+      <div className="header-actions">
+        <div className="stream-pill">
+          <span className={connected && !paused ? 'live-label' : 'paused-label'}>● {paused ? 'PAUSED' : connected ? 'LIVE' : 'OFFLINE'}</span>
+          <span>·</span><strong>{logStats.logsPerSecond.toFixed(1)}/s</strong>
+          {Number.isFinite(memory) && <><span>·</span><b>{formatBytes(memory)}</b></>}
+        </div>
+        <button className="icon-btn" onClick={onPause} title={paused ? 'Resume stream (Space)' : 'Pause stream (Space)'}>{paused ? '▶' : 'Ⅱ'}</button>
+        <button className="icon-btn" onClick={onClear} title="Clear captured logs">⌫</button>
+        <button className="export-btn" onClick={onExport}>⇧ Export</button>
       </div>
     </header>
   );
 });
 
-const Filters = memo(function Filters({ filters, setFilters, limit, setLimit, speed, setSpeed }) {
+const ViewTabs = memo(function ViewTabs({ active, setActive, counts }) {
+  const tabs = [
+    ['stream', '[]', 'Unified Stream', counts.stream],
+    ['processes', '▦', 'Process Matrix', counts.processes],
+    ['anomalies', '!', 'Errors & Crashes', counts.anomalies],
+    ['network', '◎', 'Network Inspector', counts.network]
+  ];
+  return (
+    <nav className="view-tabs">
+      <div className="tab-group">
+        {tabs.map(([id, icon, label, count]) => (
+          <button key={id} className={active === id ? 'view-tab active' : 'view-tab'} onClick={() => setActive(id)}>
+            <span className="tab-icon">{icon}</span>{label}<b>{count.toLocaleString()}</b>
+          </button>
+        ))}
+      </div>
+      <div className="view-meta"><span>NATIVE + HOST TELEMETRY</span><i className="dot green" /></div>
+    </nav>
+  );
+});
+
+const FilterBar = memo(function FilterBar({ filters, setFilters, limit, setLimit, speed, setSpeed, matched, captured }) {
   useSyncExternalStore(logStore.subscribeFacets, logStore.getFacetRevision, logStore.getFacetRevision);
   const facets = logStore.getFacets();
   return (
-    <div className="filters-shell">
-      <div className="filters">
-        <ProcessPicker values={facets.processes} selected={filters.processes} onChange={(processes) => setFilters((current) => ({ ...current, processes }))} />
-        <select value={filters.level} onChange={(event) => setFilters((current) => ({ ...current, level: event.target.value }))}>
-          <option value="">All levels</option>
-          {facets.levels.map((item) => <option key={item} value={item}>{item}</option>)}
-        </select>
-        <SearchableFacet label="All packages" values={facets.packages} value={filters.package} onChange={(pkg) => setFilters((current) => ({ ...current, package: pkg }))} />
-        <SearchableFacet label="All services" values={facets.services} value={filters.service} onChange={(service) => setFilters((current) => ({ ...current, service }))} />
-        <select value={limit} onChange={(event) => setLimit(Number(event.target.value))}>{LIMITS.map((value) => <option key={value} value={value}>{value} logs</option>)}</select>
-        <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>{SPEEDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-        <input value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search message, class, file, subsystem, package…" />
-      </div>
+    <div className="filter-bar">
+      <ProcessPicker values={facets.processes} selected={filters.processes} onChange={(processes) => setFilters((current) => ({ ...current, processes }))} />
+      <select value={filters.level} onChange={(event) => setFilters((current) => ({ ...current, level: event.target.value }))}>
+        <option value="">All levels</option>
+        {facets.levels.map((item) => <option key={item}>{item}</option>)}
+      </select>
+      <SearchableFacet label="Packages" values={facets.packages} value={filters.package} onChange={(value) => setFilters((current) => ({ ...current, package: value }))} />
+      <SearchableFacet label="Services" values={facets.services} value={filters.service} onChange={(value) => setFilters((current) => ({ ...current, service: value }))} />
+      <span className="filter-divider" />
+      <select value={limit} onChange={(event) => setLimit(Number(event.target.value))}>{LIMITS.map((value) => <option key={value} value={value}>{value} rows</option>)}</select>
+      <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>{SPEEDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <div className="filter-count"><strong>{matched.toLocaleString()}</strong> matched <span>/</span> {captured.toLocaleString()} captured</div>
     </div>
   );
 });
 
-const LogRow = memo(function LogRow({ row, selected, onSelect }) {
-  const [expanded, setExpanded] = useState(false);
+const SeverityBadge = memo(function SeverityBadge({ level }) {
+  return <span className={`severity ${level}`}>{String(level).toUpperCase()}</span>;
+});
+
+const StreamRow = memo(function StreamRow({ row, selected, onSelect }) {
   const level = levelName(row);
-  const location = [row.className, row.method, row.file && row.line ? `${row.file}:${row.line}` : row.file].filter(Boolean).join(' · ');
   return (
-    <article className={`log ${level}`}>
-      <label className="pick"><input type="checkbox" checked={selected} onChange={(event) => onSelect(row.id, event.target.checked)} /></label>
-      <div className="time">{row.timestamp || new Date(row.receivedAt || Date.now()).toLocaleTimeString()}</div>
-      <div className="level-pill">{level}</div>
-      <div><div className="source">{sourceName(row)}</div><div className="service">{row.process || 'Unknown process'} · {serviceName(row)}</div></div>
-      <div><div className="message">{row.message || row.raw || ''}</div><div className="meta">{[row.pid && `pid=${row.pid}`, row.tid && `tid=${row.tid}`, row.subsystem && `subsystem=${row.subsystem}`, row.category && `category=${row.category}`, location].filter(Boolean).join(' · ')}</div></div>
-      <div className="actions"><button onClick={() => navigator.clipboard.writeText(JSON.stringify(row, null, 2))}>Copy</button><button onClick={() => setExpanded((value) => !value)}>Details</button></div>
-      {expanded && <pre className="details">{JSON.stringify(row, null, 2)}</pre>}
-    </article>
+    <button className={`stream-row ${selected ? 'selected' : ''} ${level === 'error' || level === 'fatal' ? 'error-row' : ''}`} onClick={() => onSelect(row)}>
+      <span className="cell time">{shortTime(row)}</span>
+      <span className="cell severity-cell"><SeverityBadge level={level} /></span>
+      <span className="cell process-cell"><b>{row.process || 'Unknown'}</b>{row.pid && <small>#{row.pid}</small>}</span>
+      <span className="cell source-cell">{row.subsystem || sourceName(row)}</span>
+      <span className="cell message-cell">{row.message || row.raw || ''}</span>
+      <span className="cell evidence-cell">{row.network?.protocol || row.network?.errorCode || row.category || ''}</span>
+    </button>
   );
 });
 
-function LogList({ rows, selectedIds, onSelect }) {
+function LogStream({ rows, selectedRow, onSelect, emptyText = 'No logs match the current filters.' }) {
   const parentRef = useRef(null);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 86,
-    overscan: 12,
+    estimateSize: () => 32,
+    overscan: 18,
     getItemKey: (index) => rows[index]?.id || index
   });
-  if (!rows.length) return <div className="empty">No logs match the current filters.</div>;
+
   return (
-    <main ref={parentRef} className="log-viewport">
-      <div className="virtual-space" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-        {virtualizer.getVirtualItems().map((item) => {
-          const row = rows[item.index];
-          return (
-            <div key={item.key} ref={virtualizer.measureElement} data-index={item.index} className="virtual-row" style={{ transform: `translateY(${item.start}px)` }}>
-              <LogRow row={row} selected={selectedIds.has(row.id)} onSelect={onSelect} />
-            </div>
-          );
-        })}
+    <section className="stream-panel">
+      <div className="stream-head">
+        <span>Time</span><span>Level</span><span>Process / PID</span><span>Subsystem / Source</span><span>Message body / payload</span><span>Evidence</span>
       </div>
-    </main>
+      {!rows.length ? <div className="empty-state">{emptyText}</div> : (
+        <div ref={parentRef} className="stream-scroll">
+          <div className="virtual-space" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+            {virtualizer.getVirtualItems().map((item) => {
+              const row = rows[item.index];
+              return (
+                <div className="virtual-row" key={item.key} data-index={item.index} ref={virtualizer.measureElement} style={{ transform: `translateY(${item.start}px)` }}>
+                  <StreamRow row={row} selected={selectedRow?.id === row.id} onSelect={onSelect} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
-const DeviceSidebar = memo(function DeviceSidebar({ session, focusProcess, metrics }) {
-  const device = session?.device || {};
-  const app = session?.app || {};
-  const metro = session?.metro || {};
+function ProcessMatrix({ rows, onIsolate }) {
   return (
-    <aside className="sidebar left-sidebar">
-      <PanelCard title="Device">
-        <div className="device-hero"><div className="device-icon">{device.platform === 'android' ? 'A' : 'iOS'}</div><div><strong>{device.deviceName || 'Connected device'}</strong><span>{device.model || device.platform || 'Unknown model'}</span></div></div>
-        <InfoRow label="OS" value={device.osVersion} />
-        <InfoRow label="Architecture" value={device.architecture} mono />
-        <InfoRow label="Device ID" value={device.deviceId} mono />
-        <InfoRow label="Memory" value={formatBytes(device.totalMemoryBytes)} />
-      </PanelCard>
-      <PanelCard title="Application">
-        <InfoRow label="Name" value={app.name} />
-        <InfoRow label="Version" value={app.version} />
-        <InfoRow label="Bundle ID" value={app.bundleId} mono />
-        <InfoRow label="React Native" value={app.reactNativeVersion} mono />
-        <InfoRow label="React" value={app.reactVersion} mono />
-        <InfoRow label="Process" value={focusProcess || app.primaryProcess} mono />
-        <InfoRow label="PID" value={metrics?.pid ? String(metrics.pid) : null} mono />
-      </PanelCard>
-      <PanelCard title="Session">
-        <div className="health-row"><span className={metro.connected ? 'health-dot good' : 'health-dot'} />Metro <strong>{metro.connected ? 'Connected' : 'Not detected'}</strong></div>
-        <div className="health-row"><span className="health-dot good" />Native log stream <strong>Active</strong></div>
-        <InfoRow label="Metro port" value={metro.port ? String(metro.port) : null} mono />
-        <InfoRow label="Collector" value={session?.collector?.platform} mono />
-      </PanelCard>
-    </aside>
-  );
-});
-
-const MetricCard = memo(function MetricCard({ title, value, subtitle, values, suffix = '', precision = 0 }) {
-  return (
-    <PanelCard title={title} className="metric-card">
-      <div className="metric-headline">{value}</div>
-      <div className="metric-subtitle">{subtitle}</div>
-      <Sparkline values={values} suffix={suffix} precision={precision} />
-    </PanelCard>
-  );
-});
-
-const LevelDistribution = memo(function LevelDistribution({ levels }) {
-  const entries = Object.entries(levels || {}).sort((a, b) => b[1] - a[1]);
-  const total = Math.max(1, entries.reduce((sum, [, count]) => sum + count, 0));
-  return (
-    <PanelCard title="Log distribution">
-      <div className="distribution">
-        {entries.slice(0, 6).map(([level, count]) => (
-          <div key={level} className="distribution-row">
-            <div className="distribution-label"><span>{level}</span><strong>{count}</strong></div>
-            <div className="distribution-track"><i style={{ width: `${Math.max(2, (count / total) * 100)}%` }} /></div>
+    <section className="matrix-panel">
+      <div className="matrix-head">
+        <span>Process</span><span>PID</span><span>Memory</span><span>CPU</span><span>FPS</span><span>Threads</span><span>Logs</span><span>Errors</span><span>State</span><span />
+      </div>
+      <div className="matrix-scroll">
+        {rows.map((row) => (
+          <div className={`matrix-row ${row.isMainApp ? 'main' : ''}`} key={`${row.pid || 'none'}-${row.process}`}>
+            <span className="matrix-process"><i className={row.isMainApp ? 'dot cyan' : row.errors ? 'dot rose' : 'dot muted'} /><strong>{row.process}</strong>{row.isMainApp && <em>MAIN APP</em>}</span>
+            <span>{row.pid || '—'}</span>
+            <span>{formatBytes(row.memoryBytes)}</span>
+            <span>{Number.isFinite(row.cpuPercent) ? `${row.cpuPercent.toFixed(1)}%` : '—'}</span>
+            <span>{Number.isFinite(row.fps) ? row.fps.toFixed(0) : '—'}</span>
+            <span>{Number.isFinite(row.threads) ? row.threads : '—'}</span>
+            <span>{(row.total || 0).toLocaleString()}</span>
+            <span className={row.errors ? 'danger-text' : ''}>{row.errors || 0}</span>
+            <span>{row.state || (row.thermalState ? `thermal:${row.thermalState}` : '—')}</span>
+            <span><button className="row-action" onClick={() => onIsolate(row.process)}>Isolate</button></span>
           </div>
         ))}
-        {!entries.length && <div className="muted">Waiting for logs…</div>}
+        {!rows.length && <div className="empty-state">No process telemetry is available yet.</div>}
       </div>
-    </PanelCard>
+    </section>
   );
-});
+}
 
-const MetricsSidebar = memo(function MetricsSidebar({ metrics, history, logStats, logRateHistory, focusProcess }) {
-  const memoryValues = history.map((item) => item.memoryBytes ? item.memoryBytes / 1024 / 1024 : 0);
-  const cpuValues = history.map((item) => Number(item.cpuPercent || 0));
+function AnomaliesView({ groups, onSelect }) {
   return (
-    <aside className="sidebar right-sidebar">
-      <div className="sidebar-heading"><div><strong>Performance</strong><span>{focusProcess || 'Select one process'}</span></div><span className={metrics?.available ? 'pulse-dot' : 'pulse-dot off'} /></div>
-      <MetricCard title="Memory" value={metrics?.available ? formatBytes(metrics.memoryBytes) : 'Unavailable'} subtitle={metrics?.available ? 'Resident / PSS memory' : (metrics?.reason || 'Process metrics unavailable')} values={memoryValues} suffix=" MB" precision={0} />
-      <MetricCard title="CPU" value={metrics?.available && Number.isFinite(metrics.cpuPercent) ? `${metrics.cpuPercent.toFixed(1)}%` : 'Unavailable'} subtitle={metrics?.available ? `Current process CPU · ${metrics.source || 'runtime'}` : (metrics?.reason || 'Process metrics unavailable')} values={cpuValues} suffix="%" precision={1} />
-      <MetricCard title="Log rate" value={`${logStats.logsPerSecond.toFixed(1)}/s`} subtitle={`${logStats.total.toLocaleString()} logs captured`} values={logRateHistory} suffix="/s" precision={1} />
-      <LevelDistribution levels={logStats.levels} />
+    <section className="anomaly-panel">
+      <div className="section-title"><span>ERROR GROUPS & CRASH SIGNALS</span><small>Derived only from captured log evidence</small></div>
+      <div className="anomaly-grid">
+        {groups.map((group) => (
+          <button className={`anomaly-card ${group.crash ? 'crash' : ''}`} key={group.signature} onClick={() => onSelect(group.latest)}>
+            <div className="anomaly-top"><SeverityBadge level={group.level} /><span>{group.count}×</span>{group.crash && <b>CRASH SIGNAL</b>}</div>
+            <strong>{group.process}</strong>
+            <p>{group.latest.message || group.latest.raw}</p>
+            <div><span>{sourceName(group.latest)}</span><span>{shortTime(group.latest)}</span></div>
+          </button>
+        ))}
+        {!groups.length && <div className="empty-state">No error or crash evidence in the captured session.</div>}
+      </div>
+    </section>
+  );
+}
+
+function NetworkView({ rows, selectedRow, onSelect }) {
+  return (
+    <section className="network-panel">
+      <div className="network-summary">
+        <div><span>NETWORK LOGS</span><strong>{rows.length.toLocaleString()}</strong></div>
+        <div><span>ENDPOINTS SEEN</span><strong>{new Set(rows.map((row) => row.network?.endpoint).filter(Boolean)).size}</strong></div>
+        <div><span>URLS SEEN</span><strong>{new Set(rows.map((row) => row.network?.url).filter(Boolean)).size}</strong></div>
+        <div><span>NETWORK ERRORS</span><strong>{rows.filter((row) => levelName(row) === 'error' || row.network?.errorCode).length}</strong></div>
+      </div>
+      <LogStream rows={rows} selectedRow={selectedRow} onSelect={onSelect} emptyText="No network evidence is present in captured native logs." />
+    </section>
+  );
+}
+
+function RuntimeMeter({ label, value, detail, ratio, tone = 'cyan' }) {
+  const width = Number.isFinite(ratio) ? Math.max(0, Math.min(100, ratio * 100)) : 0;
+  return (
+    <div className="runtime-meter">
+      <div><span>{label}</span><strong>{value}</strong></div>
+      {detail && <small>{detail}</small>}
+      <div className="meter-track"><i className={tone} style={{ width: `${width}%` }} /></div>
+    </div>
+  );
+}
+
+function Inspector({ session, runtime, selectedRow, processRows, onQuickFilter }) {
+  const device = session?.device || {};
+  const app = session?.app || {};
+  const totalMemory = runtime?.physicalMemoryBytes || device.totalMemoryBytes;
+  const resident = runtime?.residentMemoryBytes || runtime?.memoryBytes;
+  const memoryRatio = resident && totalMemory ? resident / totalMemory : null;
+  const main = processRows.find((row) => row.isMainApp);
+  const observedHermes = Boolean(main?.hermesObserved);
+
+  return (
+    <aside className="inspector">
+      <div className="inspector-title">ACTIVE INSPECTOR <span>▥</span></div>
+      <div className="inspector-scroll">
+        <section className="inspector-card target-info">
+          <div><span>DEVICE</span><strong>{device.deviceName || '—'}</strong></div>
+          <div><span>OS</span><strong>{[device.osVersion, device.architecture].filter(Boolean).join(' · ') || '—'}</strong></div>
+          <div><span>APP</span><strong>{app.name || '—'}</strong></div>
+          <div><span>BUNDLE</span><strong>{app.bundleId || '—'}</strong></div>
+          <div><span>ENGINE</span><strong className={observedHermes ? 'purple-text' : ''}>{observedHermes ? 'Hermes observed' : 'Not inferred'}</strong></div>
+          <div><span>LINK</span><strong className={session?.metro?.connected ? 'good-text' : ''}>{session?.metro?.connected ? `Metro ${session.metro.port}` : 'Metro not detected'}</strong></div>
+        </section>
+
+        <section>
+          <div className="inspector-section-title">QUICK FILTER PRESETS</div>
+          <div className="quick-filters">
+            <button onClick={() => onQuickFilter('is:error')}><i className="dot rose" />Errors</button>
+            <button onClick={() => onQuickFilter('network:true')}><i className="dot amber" />Network evidence</button>
+            {app.primaryProcess && <button onClick={() => onQuickFilter(`process:"${app.primaryProcess}"`)}><i className="dot cyan" />Main app only</button>}
+          </div>
+        </section>
+
+        <section>
+          <div className="inspector-section-title">RESOURCE ALLOCATION</div>
+          <div className="inspector-card">
+            <RuntimeMeter label="RAM" value={formatBytes(resident)} detail={runtime?.memoryKind ? runtime.memoryKind.toUpperCase() : null} ratio={memoryRatio} />
+            <RuntimeMeter label="CPU" value={Number.isFinite(runtime?.cpuPercent) ? `${runtime.cpuPercent.toFixed(1)}%` : '—'} detail={runtime?.source || null} ratio={Number.isFinite(runtime?.cpuPercent) ? runtime.cpuPercent / 100 : null} tone="green" />
+            <RuntimeMeter label="FPS" value={Number.isFinite(runtime?.fps) ? runtime.fps.toFixed(0) : '—'} detail="native display callback" ratio={Number.isFinite(runtime?.fps) ? runtime.fps / 60 : null} tone="purple" />
+            <div className="runtime-grid">
+              <span>Threads<strong>{runtime?.threads ?? '—'}</strong></span>
+              <span>Thermal<strong>{runtime?.thermalState || '—'}</strong></span>
+              <span>Battery<strong>{Number.isFinite(runtime?.batteryPercent) ? `${runtime.batteryPercent.toFixed(0)}%` : '—'}</strong></span>
+              <span>Heap<strong>{formatBytes(runtime?.javaHeapUsedBytes || runtime?.nativeHeapAllocatedBytes)}</strong></span>
+            </div>
+            {(Number.isFinite(runtime?.rxBytes) || Number.isFinite(runtime?.txBytes)) && (
+              <div className="network-bytes"><span>RX {formatBytes(runtime?.rxBytes)}</span><span>TX {formatBytes(runtime?.txBytes)}</span></div>
+            )}
+          </div>
+        </section>
+
+        {selectedRow && (
+          <>
+            {selectedRow.network && (
+              <section>
+                <div className="inspector-section-title">NETWORK EVIDENCE</div>
+                <div className="inspector-card evidence-list">
+                  {selectedRow.network.protocol && <div><span>Protocol</span><strong>{selectedRow.network.protocol}</strong></div>}
+                  {selectedRow.network.tlsVersion && <div><span>TLS</span><strong>{selectedRow.network.tlsVersion}</strong></div>}
+                  {selectedRow.network.endpoint && <div><span>Endpoint</span><strong>{selectedRow.network.endpoint}</strong></div>}
+                  {selectedRow.network.errorCode && <div><span>Error</span><strong className="danger-text">{selectedRow.network.errorCode}</strong></div>}
+                  {selectedRow.network.url && <div className="wide"><span>URL</span><strong>{selectedRow.network.url}</strong></div>}
+                </div>
+              </section>
+            )}
+            <section>
+              <div className="inspector-section-title raw-title"><span>SELECTED RAW PAYLOAD</span><button onClick={() => navigator.clipboard.writeText(JSON.stringify(selectedRow, null, 2))}>COPY JSON</button></div>
+              <pre className="raw-payload">{JSON.stringify(selectedRow, null, 2)}</pre>
+            </section>
+          </>
+        )}
+      </div>
     </aside>
   );
-});
+}
 
 export default function App() {
   const logRevision = useSyncExternalStore(logStore.subscribeLogs, logStore.getLogRevision, logStore.getLogRevision);
   const [connected, setConnected] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [filters, setFilters] = useState({ processes: new Set(), level: '', package: '', service: '', search: '' });
-  const [limit, setLimit] = useState(100);
-  const [speed, setSpeedState] = useState(500);
-  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [activeView, setActiveView] = useState('stream');
+  const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState({ processes: new Set(), level: '', package: '', service: '' });
+  const [limit, setLimit] = useState(250);
+  const [speed, setSpeedState] = useState(250);
   const [session, setSession] = useState(null);
-  const [metrics, setMetrics] = useState({ available: false });
-  const [metricHistory, setMetricHistory] = useState([]);
-  const [logStats, setLogStats] = useState(() => logStore.getStats());
-  const [logRateHistory, setLogRateHistory] = useState([]);
-
-  const activeRows = logStore.getActiveData();
-  const selectedProcesses = useMemo(() => [...filters.processes], [filters.processes]);
-  const observedRuntimeProcess = useMemo(() => {
-    const signal = activeRows.find((row) => {
-      if (!row.process) return false;
-      const haystack = [row.package, row.integration, row.subsystem, row.tag, row.sourceLibrary, row.message].filter(Boolean).join(' ');
-      return row.sourceKind === 'app/process' || /com\.facebook\.react|react[- ]?native|hermes/i.test(haystack);
-    });
-    return signal?.process || '';
-  }, [activeRows, logRevision]);
-  const focusProcess = selectedProcesses.length === 1
-    ? selectedProcesses[0]
-    : selectedProcesses.length === 0 ? (session?.app?.primaryProcess || observedRuntimeProcess || '') : '';
+  const [processMetrics, setProcessMetrics] = useState([]);
+  const [selectedMetric, setSelectedMetric] = useState(null);
+  const [nativeRuntime, setNativeRuntime] = useState(null);
+  const [selectedRow, setSelectedRow] = useState(null);
+  const searchRef = useRef(null);
 
   useEffect(() => {
-    logStore.setRenderInterval(500);
+    logStore.setRenderInterval(250);
     const source = new EventSource('/events');
     source.onopen = () => setConnected(true);
     source.onerror = () => setConnected(false);
-    source.onmessage = (event) => logStore.push(JSON.parse(event.data));
+    source.onmessage = (event) => {
+      const value = JSON.parse(event.data);
+      if (value.kind === 'runtime-telemetry' && value.telemetry) {
+        setNativeRuntime({
+          ...value.telemetry,
+          process: value.telemetry.process || value.process,
+          pid: value.telemetry.pid || value.pid
+        });
+        return;
+      }
+      logStore.push(value);
+    };
     return () => source.close();
   }, []);
 
@@ -366,7 +583,7 @@ export default function App() {
       } catch {}
     };
     refresh();
-    const timer = setInterval(refresh, 5000);
+    const timer = setInterval(refresh, 4000);
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
@@ -386,63 +603,177 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    setMetricHistory([]);
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const response = await fetch('/process-metrics', { cache: 'no-store' });
+        if (!response.ok || cancelled) return;
+        const value = await response.json();
+        if (!cancelled && Array.isArray(value)) setProcessMetrics(value);
+      } catch {}
+    };
+    refresh();
+    const timer = setInterval(refresh, 2000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
+
+  const selectedProcesses = useMemo(() => [...filters.processes], [filters.processes]);
+  const focusProcess = selectedProcesses.length === 1
+    ? selectedProcesses[0]
+    : session?.app?.primaryProcess || '';
+
+  useEffect(() => {
     if (!focusProcess) {
-      setMetrics({ available: false });
+      setSelectedMetric(null);
       return undefined;
     }
     let cancelled = false;
-    const sample = async () => {
+    const refresh = async () => {
       try {
         const response = await fetch(`/metrics?process=${encodeURIComponent(focusProcess)}`, { cache: 'no-store' });
         if (!response.ok || cancelled) return;
         const value = await response.json();
-        if (cancelled) return;
-        setMetrics(value);
-        if (value.available) setMetricHistory((current) => [...current, value].slice(-METRIC_HISTORY));
+        if (!cancelled) setSelectedMetric(value);
       } catch {}
     };
-    sample();
-    const timer = setInterval(sample, 1000);
+    refresh();
+    const timer = setInterval(refresh, 1000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [focusProcess]);
 
   useEffect(() => {
-    const sample = () => {
-      const stats = logStore.getStats();
-      setLogStats(stats);
-      setLogRateHistory((current) => [...current, stats.logsPerSecond].slice(-METRIC_HISTORY));
+    const onKey = (event) => {
+      const editable = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (editable) return;
+      if (event.code === 'Space') {
+        event.preventDefault();
+        if (paused) logStore.resume(); else logStore.pause();
+        setPaused((current) => !current);
+      } else if (event.key.toLowerCase() === 'c') {
+        logStore.clear();
+        setSelectedRow(null);
+      } else if (event.key === '/') {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
     };
-    sample();
-    const timer = setInterval(sample, 1000);
-    return () => clearInterval(timer);
-  }, []);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paused]);
 
-  const filteredRows = useMemo(() => activeRows.filter((row) => matches(row, filters)).slice(0, limit), [activeRows, filters, limit, logRevision]);
+  const activeRows = logStore.getActiveData();
+  const processStats = logStore.getProcessStats();
+  const logStats = logStore.getStats();
 
-  const setSpeed = (value) => { setSpeedState(value); logStore.setRenderInterval(value); };
-  const togglePause = () => { if (paused) logStore.resume(); else logStore.pause(); setPaused((value) => !value); };
-  const clear = () => { logStore.clear(); setSelectedIds(new Set()); setMetricHistory([]); setLogRateHistory([]); };
-  const onSelect = (id, checked) => {
-    if (!id) return;
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (checked) next.add(id); else next.delete(id);
-      return next;
-    });
+  const filtered = useMemo(() => {
+    const rows = [];
+    let matched = 0;
+    for (const row of activeRows) {
+      if (!facetMatches(row, filters) || !queryMatches(row, query)) continue;
+      matched += 1;
+      if (rows.length < limit) rows.push(row);
+    }
+    return { rows, matched };
+  }, [activeRows, filters, query, limit, logRevision]);
+
+  const networkRows = useMemo(() => activeRows.filter(isNetworkEvent), [activeRows, logRevision]);
+  const errorRows = useMemo(() => activeRows.filter((row) => ['error', 'fatal'].includes(levelName(row)) || isCrashEvent(row)), [activeRows, logRevision]);
+
+  const anomalyGroups = useMemo(() => {
+    const groups = new Map();
+    for (const row of errorRows) {
+      const signature = anomalySignature(row);
+      const current = groups.get(signature) || {
+        signature,
+        level: levelName(row),
+        process: row.process || 'Unknown',
+        count: 0,
+        crash: false,
+        latest: row
+      };
+      current.count += 1;
+      current.crash = current.crash || isCrashEvent(row);
+      if (Number(row.receivedAt || 0) > Number(current.latest.receivedAt || 0)) current.latest = row;
+      groups.set(signature, current);
+    }
+    return [...groups.values()].sort((a, b) => Number(b.crash) - Number(a.crash) || b.count - a.count).slice(0, 100);
+  }, [errorRows]);
+
+  const processRows = useMemo(() => {
+    const merged = mergeProcessData(processMetrics, processStats, session, nativeRuntime);
+    const hermesProcesses = new Set(activeRows.filter((row) => /hermes/i.test(eventHaystack(row))).map((row) => row.process).filter(Boolean));
+    return merged.map((row) => ({ ...row, hermesObserved: hermesProcesses.has(row.process) }));
+  }, [processMetrics, processStats, session, nativeRuntime, activeRows, logRevision]);
+
+  const mainProcess = processRows.find((row) => row.isMainApp) || processRows[0] || null;
+  const fallbackMetric = selectedMetric?.available ? selectedMetric : mainProcess;
+  const activeRuntime = runtimeForProcess(nativeRuntime, fallbackMetric) || fallbackMetric || {};
+
+  const isolateProcess = (process) => {
+    if (!process) return;
+    setFilters((current) => ({ ...current, processes: new Set([process]) }));
+    setQuery('');
+    setActiveView('stream');
+  };
+
+  const togglePause = () => {
+    if (paused) logStore.resume(); else logStore.pause();
+    setPaused((current) => !current);
+  };
+
+  const clear = () => {
+    logStore.clear();
+    setSelectedRow(null);
+  };
+
+  const exportRows = () => {
+    const rows = activeView === 'network' ? networkRows : activeView === 'anomalies' ? errorRows : filtered.rows;
+    download(rows, 'ndjson', activeView);
+  };
+
+  const setSpeed = (value) => {
+    setSpeedState(value);
+    logStore.setRenderInterval(value);
+  };
+
+  const quickFilter = (value) => {
+    setQuery(value);
+    setActiveView(value === 'network:true' ? 'network' : 'stream');
   };
 
   return (
-    <div className="app-shell">
-      <Header connected={connected} paused={paused} onPause={togglePause} onClear={clear} visibleCount={filteredRows.length} bufferedCount={activeRows.length} selectedCount={selectedIds.size} selectedIds={selectedIds} filteredRows={filteredRows} activeRows={activeRows} session={session} />
-      <div className="workspace">
-        <DeviceSidebar session={session} focusProcess={focusProcess} metrics={metrics} />
-        <section className="main-panel">
-          <Filters filters={filters} setFilters={setFilters} limit={limit} setLimit={setLimit} speed={speed} setSpeed={setSpeed} />
-          <LogList rows={filteredRows} selectedIds={selectedIds} onSelect={onSelect} />
-        </section>
-        <MetricsSidebar metrics={metrics} history={metricHistory} logStats={logStats} logRateHistory={logRateHistory} focusProcess={focusProcess} />
-      </div>
+    <div className="workbench">
+      <Header connected={connected} paused={paused} onPause={togglePause} onClear={clear} onExport={exportRows} session={session} mainProcess={mainProcess} logStats={logStats} query={query} setQuery={setQuery} searchRef={searchRef} />
+      <ViewTabs active={activeView} setActive={setActiveView} counts={{ stream: activeRows.length, processes: processRows.length, anomalies: anomalyGroups.length, network: networkRows.length }} />
+
+      <section className="process-deck">
+        <div className="process-cards">
+          {processRows.slice(0, 4).map((item) => <ProcessCard key={`${item.pid || 'none'}-${item.process}`} item={item} onIsolate={isolateProcess} />)}
+          {!processRows.length && <div className="deck-empty">Waiting for process telemetry…</div>}
+        </div>
+      </section>
+
+      <FilterBar filters={filters} setFilters={setFilters} limit={limit} setLimit={setLimit} speed={speed} setSpeed={setSpeed} matched={filtered.matched} captured={activeRows.length} />
+
+      <main className="main-workspace">
+        <div className="content-pane">
+          {activeView === 'stream' && <LogStream rows={filtered.rows} selectedRow={selectedRow} onSelect={setSelectedRow} />}
+          {activeView === 'processes' && <ProcessMatrix rows={processRows} onIsolate={isolateProcess} />}
+          {activeView === 'anomalies' && <AnomaliesView groups={anomalyGroups} onSelect={setSelectedRow} />}
+          {activeView === 'network' && <NetworkView rows={networkRows.slice(0, 5000)} selectedRow={selectedRow} onSelect={setSelectedRow} />}
+        </div>
+        <Inspector session={session} runtime={activeRuntime} selectedRow={selectedRow} processRows={processRows} onQuickFilter={quickFilter} />
+      </main>
+
+      <footer className="status-bar">
+        <div><kbd>Space</kbd> Pause <kbd>⌘K</kbd> Command filter <kbd>C</kbd> Clear <kbd>/</kbd> Focus search</div>
+        <div><span>Ingest</span><strong>{logStats.logsPerSecond.toFixed(1)}/s</strong><span>Render</span><strong>{speed === 80 ? 'Realtime' : `${speed}ms`}</strong><span>Auto retention</span><strong>OFF</strong></div>
+      </footer>
     </div>
   );
 }
