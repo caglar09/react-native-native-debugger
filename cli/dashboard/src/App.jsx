@@ -283,10 +283,19 @@ export default function App() {
   const [logStats, setLogStats] = useState(() => logStore.getStats());
   const [logRateHistory, setLogRateHistory] = useState([]);
 
+  const activeRows = logStore.getActiveData();
   const selectedProcesses = useMemo(() => [...filters.processes], [filters.processes]);
+  const observedRuntimeProcess = useMemo(() => {
+    const signal = activeRows.find((row) => {
+      if (!row.process) return false;
+      const haystack = [row.package, row.integration, row.subsystem, row.tag, row.sourceLibrary, row.message].filter(Boolean).join(' ');
+      return row.sourceKind === 'app/process' || /com\.facebook\.react|react[- ]?native|hermes/i.test(haystack);
+    });
+    return signal?.process || '';
+  }, [activeRows, logRevision]);
   const focusProcess = selectedProcesses.length === 1
     ? selectedProcesses[0]
-    : selectedProcesses.length === 0 ? (session?.app?.primaryProcess || '') : '';
+    : selectedProcesses.length === 0 ? (session?.app?.primaryProcess || observedRuntimeProcess || '') : '';
 
   useEffect(() => {
     logStore.setRenderInterval(500);
@@ -360,7 +369,6 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  const activeRows = logStore.getActiveData();
   const filteredRows = useMemo(() => activeRows.filter((row) => matches(row, filters)).slice(0, limit), [activeRows, filters, limit, logRevision]);
 
   const setSpeed = (value) => { setSpeedState(value); logStore.setRenderInterval(value); };
