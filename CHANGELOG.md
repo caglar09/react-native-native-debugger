@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0-mcp.0
+
+- Added a local stdio Model Context Protocol server via `rn-native-debugger mcp` so MCP-capable LLM clients can diagnose the same live native-log session shown in the dashboard.
+- The `logs` host now keeps a server-side session store, allowing an MCP client that connects later to query logs captured earlier in the same debugging session.
+- Added read-only MCP tools for debugger/session status, app-scoped/full native log search, log context around stable ids, grouped native errors/crash signals, process CPU/RAM telemetry, runtime telemetry, and native network evidence.
+- Added MCP resources for `rnnd://session`, `rnnd://errors/recent`, and `rnnd://runtime/main`.
+- Added the `diagnose-native-issue` MCP prompt with an evidence-first workflow that explicitly separates captured facts from model inference.
+- Added local observability HTTP endpoints used by MCP: `/api/logs`, `/api/log-context`, `/api/errors`, `/api/log-stats`, and `/api/runtime`.
+- Native-log search defaults to the detected React Native application scope; clients can explicitly expand to all captured processes for OS/daemon/network correlation.
+- MCP operations are read-only: they do not execute arbitrary shell commands, clear the dashboard session, kill processes, or mutate the app/device.
+- Added `@modelcontextprotocol/sdk` and Zod as CLI runtime dependencies and regression coverage for session scoping, error grouping, log context, runtime telemetry separation, and dashboard-to-MCP data flow.
+
 ## 0.7.0-observability.3
 
 - Fixed iOS Simulator CPU/RAM sampling by resolving the simulator app PID first and sampling the matching host macOS process with `ps`.
