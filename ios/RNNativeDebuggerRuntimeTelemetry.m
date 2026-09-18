@@ -3,6 +3,7 @@
 #import <QuartzCore/CADisplayLink.h>
 #import <UIKit/UIKit.h>
 #import <mach/mach.h>
+#import <math.h>
 
 static NSString * const RNNDMarker = @"RNND_TELEMETRY ";
 
