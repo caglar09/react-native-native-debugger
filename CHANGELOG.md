@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0-observability.0
+
+- Redesigned the React dashboard into a three-column runtime observability console with device/app/session context, the existing virtualized log explorer, and live performance panels.
+- Added host-side Android and iOS Simulator telemetry for per-process memory and CPU without injecting additional runtime instrumentation into the React Native app.
+- Added device metadata including platform, model/device name, OS version, architecture, device id, and total memory when available.
+- Added app/session metadata including project version, bundle/application id, React Native/React versions, primary process, Metro connectivity, and collector status.
+- Added `/session` and `/metrics?process=...` dashboard endpoints while preserving `/events`, `/processes`, and `/health`.
+- Added lightweight SVG charts for memory, CPU, and live log rate plus a session-wide log-level distribution.
+- Metrics are sampled once per second and retain only a bounded chart history; captured logs continue to remain in the full in-memory session until Clear.
+- Physical iOS keeps the dashboard UI but reports process CPU/memory as unavailable when the current host tooling cannot sample them.
+- Added telemetry API and session metadata regression tests.
+
+# Changelog
+
 ## 0.6.0-react.2
 
 - Removed the dashboard's global 5000-record retention cap. Logs now remain in the in-memory session until the user explicitly presses Clear or the dashboard process/page is restarted.
