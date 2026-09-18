@@ -49,13 +49,23 @@ function classifySource(event) {
 }
 
 function enrich(event) {
-  return { ...event, ...classifySource(event), ...extractLocation(`${event.message || ''} ${event.raw || ''}`) };
+  const located = { ...event, ...extractLocation(`${event.message || ''} ${event.raw || ''}`) };
+  return { ...located, ...classifySource(located) };
 }
 
 function parseAndroidLine(line) {
   const text = String(line);
-  const match = text.match(ANDROID_RE);
+  const match = text.match(ANDROID_PREFIX_RE);
   if (!match) return enrich({ platform: 'android', level: 'unknown', tag: '', message: text, raw: text });
+
+  const payload = match[6];
+  const separator = payload.indexOf(': ');
+  const fallbackSeparator = separator < 0 ? payload.indexOf(':') : separator;
+  const tag = fallbackSeparator >= 0 ? payload.slice(0, fallbackSeparator).trim() : payload.trim();
+  const message = fallbackSeparator >= 0
+    ? payload.slice(fallbackSeparator + (separator >= 0 ? 2 : 1)).replace(/^\s+/, '')
+    : '';
+
   return enrich({
     platform: 'android',
     timestamp: `${match[1]} ${match[2]}`,
@@ -63,8 +73,8 @@ function parseAndroidLine(line) {
     tid: Number(match[4]),
     level: levels[match[5]] || 'unknown',
     priority: match[5],
-    tag: match[6].trim(),
-    message: match[7],
+    tag,
+    message,
     raw: text
   });
 }
@@ -127,4 +137,4 @@ function inferIosLevel(line) {
   return 'default';
 }
 
-module.exports = { parseAndroidLine, parseIosLine, inferIosLevel, classifySource, extractLocation };
+module.exports = { parseAndroidLine, parseIosLine, inferIosLevel, classifySource, extractLocation, enrich };
