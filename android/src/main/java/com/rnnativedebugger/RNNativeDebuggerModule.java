@@ -13,6 +13,7 @@ public class RNNativeDebuggerModule extends ReactContextBaseJavaModule {
     super(reactContext);
     context = reactContext;
     NativeDebugSink.attach(reactContext);
+    RuntimeTelemetry.start(reactContext, 1000);
   }
 
   @Override
@@ -37,6 +38,21 @@ public class RNNativeDebuggerModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
+  public void startRuntimeTelemetry(double intervalMs) {
+    RuntimeTelemetry.start(context, intervalMs);
+  }
+
+  @ReactMethod
+  public void stopRuntimeTelemetry() {
+    RuntimeTelemetry.stop();
+  }
+
+  @ReactMethod
+  public void getRuntimeMetrics(Promise promise) {
+    promise.resolve(RuntimeTelemetry.snapshotAsWritableMap());
+  }
+
+  @ReactMethod
   public void addListener(String eventName) {
     NativeDebugSink.addListener();
   }
@@ -48,6 +64,7 @@ public class RNNativeDebuggerModule extends ReactContextBaseJavaModule {
 
   @Override
   public void invalidate() {
+    RuntimeTelemetry.stop();
     NativeDebugSink.detach(context);
     super.invalidate();
   }
