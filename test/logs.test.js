@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { parseAndroidLine, parseIosLine, inferIosLevel, classifySource, extractLocation } = require('../cli/logs/parser');
+const { parseAndroidLine, parseIosLine, inferIosLevel, classifySource, extractLocation, extractRuntimeTelemetry, extractNetworkMetadata } = require('../cli/logs/parser');
 const { readApplicationId } = require('../cli/logs/collectors');
 const { startDashboard, INDEX_FILE } = require('../cli/logs/dashboard');
 
@@ -38,6 +38,30 @@ test('source classification falls back to resolved Android process instead of Un
 
 test('parseAndroidLine preserves unknown lines', () => {
   assert.equal(parseAndroidLine('hello').message, 'hello');
+});
+
+test('runtime telemetry marker is parsed as structured telemetry instead of a normal log', () => {
+  const event = parseAndroidLine('09-18 10:00:00.000  7443  7443 I RNNativeDebuggerTelemetry: RNND_TELEMETRY {"available":true,"process":"ExampleApp","pid":7443,"fps":59.8,"residentMemoryBytes":123456}');
+  assert.equal(event.kind, 'runtime-telemetry');
+  assert.equal(event.telemetry.process, 'ExampleApp');
+  assert.equal(event.telemetry.pid, 7443);
+  assert.equal(event.telemetry.fps, 59.8);
+  assert.equal(event.package, 'react-native-native-debugger');
+});
+
+test('network evidence is extracted only from emitted log content', () => {
+  const metadata = extractNetworkMetadata('CFNetwork TLS 1.3 QUIC ECONNRESET remote 17.253.144.10:443 https://example.com/data');
+  assert.equal(metadata.protocol, 'QUIC');
+  assert.equal(metadata.tlsVersion, 'TLS 1.3');
+  assert.equal(metadata.errorCode, 'ECONNRESET');
+  assert.equal(metadata.endpoint, '17.253.144.10:443');
+  assert.equal(metadata.url, 'https://example.com/data');
+  assert.equal(extractNetworkMetadata('plain application log'), null);
+});
+
+test('runtime telemetry helper rejects malformed marker payloads', () => {
+  assert.equal(extractRuntimeTelemetry('RNND_TELEMETRY not-json'), null);
+  assert.deepEqual(extractRuntimeTelemetry('prefix RNND_TELEMETRY {"cpuPercent":12.5}'), { cpuPercent: 12.5 });
 });
 
 test('inferIosLevel identifies words, one-letter priorities, and compact codes', () => {
@@ -106,15 +130,18 @@ test('readApplicationId reads Gradle applicationId', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('React dashboard source files are present and facet filters are searchable', () => {
+test('React dashboard includes searchable facets and observability workbench views', () => {
   const dashboardRoot = path.join(__dirname, '../cli/dashboard');
   const appSource = fs.readFileSync(path.join(dashboardRoot, 'src/App.jsx'), 'utf8');
   assert.ok(fs.existsSync(path.join(dashboardRoot, 'src/store.js')));
   assert.ok(fs.existsSync(path.join(dashboardRoot, 'vite.config.mjs')));
   assert.match(appSource, /SearchableFacet/);
   assert.match(appSource, /Search processes/);
-  assert.match(appSource, /All packages/);
-  assert.match(appSource, /All services/);
+  assert.match(appSource, /Unified Stream/);
+  assert.match(appSource, /Process Matrix/);
+  assert.match(appSource, /Errors & Crashes/);
+  assert.match(appSource, /Network Inspector/);
+  assert.match(appSource, /process-metrics/);
 });
 
 test('dashboard serves health and process endpoints independently from UI build', async () => {
