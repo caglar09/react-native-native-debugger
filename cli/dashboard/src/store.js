@@ -43,6 +43,7 @@ export class NativeLogStore {
     this.levelCounts = new Map();
     this.rateBuckets = new Map();
     this.processByPid = new Map();
+    this.processStats = new Map();
   }
 
   subscribeLogs = (listener) => {
@@ -111,11 +112,38 @@ export class NativeLogStore {
     if (changed) this.emitFacets();
   }
 
+  recordProcessEvent(event) {
+    const process = event.process || (event.pid ? this.processByPid.get(Number(event.pid)) : null) || 'Unknown';
+    const current = this.processStats.get(process) || {
+      process,
+      total: 0,
+      errors: 0,
+      warnings: 0,
+      fatal: 0,
+      latestAt: 0
+    };
+    const level = levelName(event);
+    current.total += 1;
+    if (level === 'fatal') {
+      current.fatal += 1;
+      current.errors += 1;
+    } else if (level === 'error') current.errors += 1;
+    else if (level === 'warn' || level === 'warning') current.warnings += 1;
+    current.latestAt = Math.max(current.latestAt, Number(event.receivedAt || Date.now()));
+    this.processStats.set(process, current);
+  }
+
+  rebuildProcessStats() {
+    this.processStats = new Map();
+    for (const event of this.buffer) this.recordProcessEvent(event);
+  }
+
   push(event) {
     if (!event.process && event.pid && this.processByPid.has(Number(event.pid))) {
       event.process = this.processByPid.get(Number(event.pid));
     }
     this.buffer.unshift(event);
+    this.recordProcessEvent(event);
     const level = levelName(event);
     this.levelCounts.set(level, (this.levelCounts.get(level) || 0) + 1);
     const second = Math.floor(Number(event.receivedAt || Date.now()) / 1000);
@@ -149,6 +177,7 @@ export class NativeLogStore {
     if (enriched) {
       this.packages = new Set(this.buffer.map(sourceName).filter(Boolean));
       this.services = new Set(this.buffer.map(serviceName).filter(Boolean));
+      this.rebuildProcessStats();
     }
     if (changed || enriched) {
       this.emitFacets();
@@ -189,6 +218,7 @@ export class NativeLogStore {
     this.levelCounts = new Map();
     this.rateBuckets = new Map();
     this.processByPid = new Map();
+    this.processStats = new Map();
     this.emitFacets();
     this.emitLogs();
   }
@@ -199,6 +229,14 @@ export class NativeLogStore {
 
   getFacets() {
     return this.facetSnapshot;
+  }
+
+  getProcessStats() {
+    return [...this.processStats.values()].sort((a, b) =>
+      b.errors - a.errors ||
+      b.total - a.total ||
+      b.latestAt - a.latestAt
+    );
   }
 
   getStats(now = Date.now()) {
