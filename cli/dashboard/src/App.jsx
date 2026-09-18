@@ -53,8 +53,10 @@ function eventHaystack(row) {
 
 function tokenizeQuery(query) {
   const tokens = [];
-  String(query || '').replace(/"([^"]+)"|'([^']+)'|(\S+)/g, (_, doubleQuoted, singleQuoted, bare) => {
-    tokens.push(doubleQuoted || singleQuoted || bare);
+  String(query || '').replace(/([A-Za-z]+):"([^"]+)"|([A-Za-z]+):'([^']+)'|"([^"]+)"|'([^']+)'|(\S+)/g, (_, keyDouble, valueDouble, keySingle, valueSingle, doubleQuoted, singleQuoted, bare) => {
+    if (keyDouble) tokens.push(`${keyDouble}:${valueDouble}`);
+    else if (keySingle) tokens.push(`${keySingle}:${valueSingle}`);
+    else tokens.push(doubleQuoted || singleQuoted || bare);
     return '';
   });
   return tokens;
@@ -489,7 +491,7 @@ function Inspector({ session, runtime, selectedRow, processRows, onQuickFilter }
           <div className="quick-filters">
             <button onClick={() => onQuickFilter('is:error')}><i className="dot rose" />Errors</button>
             <button onClick={() => onQuickFilter('network:true')}><i className="dot amber" />Network evidence</button>
-            {app.primaryProcess && <button onClick={() => onQuickFilter(`process:"${app.primaryProcess}"`)}><i className="dot cyan" />Main app only</button>}
+            {app.primaryProcess && <button onClick={() => onQuickFilter(`process:${app.primaryProcess}`)}><i className="dot cyan" />Main app only</button>}
           </div>
         </section>
 
