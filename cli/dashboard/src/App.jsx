@@ -453,18 +453,37 @@ function NetworkView({ rows, selectedRow, onSelect }) {
   );
 }
 
-function RuntimeMeter({ label, value, detail, ratio, tone = 'cyan' }) {
+function MiniSparkline({ values }) {
+  const data = (values || []).filter((value) => Number.isFinite(value));
+  if (data.length < 2) return <div className="mini-spark empty" />;
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = Math.max(1, max - min);
+  const points = data.map((value, index) => {
+    const x = (index / (data.length - 1)) * 100;
+    const y = 22 - ((value - min) / range) * 18;
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <svg className="mini-spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">
+      <polyline points={points} fill="none" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+function RuntimeMeter({ label, value, detail, ratio, tone = 'cyan', history = [] }) {
   const width = Number.isFinite(ratio) ? Math.max(0, Math.min(100, ratio * 100)) : 0;
   return (
     <div className="runtime-meter">
       <div><span>{label}</span><strong>{value}</strong></div>
       {detail && <small>{detail}</small>}
+      <MiniSparkline values={history} />
       <div className="meter-track"><i className={tone} style={{ width: `${width}%` }} /></div>
     </div>
   );
 }
 
-function Inspector({ session, runtime, selectedRow, processRows, onQuickFilter }) {
+function Inspector({ session, runtime, selectedRow, processRows, onQuickFilter, metricHistory }) {
   const device = session?.device || {};
   const app = session?.app || {};
   const totalMemory = runtime?.physicalMemoryBytes || device.totalMemoryBytes;
@@ -472,6 +491,10 @@ function Inspector({ session, runtime, selectedRow, processRows, onQuickFilter }
   const memoryRatio = resident && totalMemory ? resident / totalMemory : null;
   const main = processRows.find((row) => row.isMainApp);
   const observedHermes = Boolean(main?.hermesObserved);
+  const history = (metricHistory || []).filter((item) => !runtime?.process || item.process === runtime.process);
+  const memoryHistory = history.map((item) => item.residentMemoryBytes ?? item.memoryBytes).filter(Number.isFinite);
+  const cpuHistory = history.map((item) => item.cpuPercent).filter(Number.isFinite);
+  const fpsHistory = history.map((item) => item.fps).filter(Number.isFinite);
 
   return (
     <aside className="inspector">
@@ -498,9 +521,9 @@ function Inspector({ session, runtime, selectedRow, processRows, onQuickFilter }
         <section>
           <div className="inspector-section-title">RESOURCE ALLOCATION</div>
           <div className="inspector-card">
-            <RuntimeMeter label="RAM" value={formatBytes(resident)} detail={runtime?.memoryKind ? runtime.memoryKind.toUpperCase() : null} ratio={memoryRatio} />
-            <RuntimeMeter label="CPU" value={Number.isFinite(runtime?.cpuPercent) ? `${runtime.cpuPercent.toFixed(1)}%` : '—'} detail={runtime?.source || null} ratio={Number.isFinite(runtime?.cpuPercent) ? runtime.cpuPercent / 100 : null} tone="green" />
-            <RuntimeMeter label="FPS" value={Number.isFinite(runtime?.fps) ? runtime.fps.toFixed(0) : '—'} detail="native display callback" ratio={Number.isFinite(runtime?.fps) ? runtime.fps / 60 : null} tone="purple" />
+            <RuntimeMeter label="RAM" value={formatBytes(resident)} detail={runtime?.memoryKind ? runtime.memoryKind.toUpperCase() : null} ratio={memoryRatio} history={memoryHistory} />
+            <RuntimeMeter label="CPU" value={Number.isFinite(runtime?.cpuPercent) ? `${runtime.cpuPercent.toFixed(1)}%` : '—'} detail={runtime?.source || null} ratio={Number.isFinite(runtime?.cpuPercent) ? runtime.cpuPercent / 100 : null} tone="green" history={cpuHistory} />
+            <RuntimeMeter label="FPS" value={Number.isFinite(runtime?.fps) ? runtime.fps.toFixed(0) : '—'} detail="native display callback" ratio={Number.isFinite(runtime?.fps) ? runtime.fps / 60 : null} tone="purple" history={fpsHistory} />
             <div className="runtime-grid">
               <span>Threads<strong>{runtime?.threads ?? '—'}</strong></span>
               <span>Thermal<strong>{runtime?.thermalState || '—'}</strong></span>
@@ -551,6 +574,7 @@ export default function App() {
   const [processMetrics, setProcessMetrics] = useState([]);
   const [selectedMetric, setSelectedMetric] = useState(null);
   const [nativeRuntime, setNativeRuntime] = useState(null);
+  const [metricHistory, setMetricHistory] = useState([]);
   const [selectedRow, setSelectedRow] = useState(null);
   const searchRef = useRef(null);
 
@@ -562,11 +586,13 @@ export default function App() {
     source.onmessage = (event) => {
       const value = JSON.parse(event.data);
       if (value.kind === 'runtime-telemetry' && value.telemetry) {
-        setNativeRuntime({
+        const sample = {
           ...value.telemetry,
           process: value.telemetry.process || value.process,
           pid: value.telemetry.pid || value.pid
-        });
+        };
+        setNativeRuntime(sample);
+        setMetricHistory((current) => [...current, sample].slice(-180));
         return;
       }
       logStore.push(value);
@@ -635,7 +661,10 @@ export default function App() {
         const response = await fetch(`/metrics?process=${encodeURIComponent(focusProcess)}`, { cache: 'no-store' });
         if (!response.ok || cancelled) return;
         const value = await response.json();
-        if (!cancelled) setSelectedMetric(value);
+        if (!cancelled) {
+          setSelectedMetric(value);
+          if (value?.available) setMetricHistory((current) => [...current, value].slice(-180));
+        }
       } catch {}
     };
     refresh();
@@ -775,7 +804,7 @@ export default function App() {
           {activeView === 'anomalies' && <AnomaliesView groups={anomalyGroups} onSelect={setSelectedRow} />}
           {activeView === 'network' && <NetworkView rows={networkRows.slice(0, 5000)} selectedRow={selectedRow} onSelect={setSelectedRow} />}
         </div>
-        <Inspector session={session} runtime={activeRuntime} selectedRow={selectedRow} processRows={processRows} onQuickFilter={quickFilter} />
+        <Inspector session={session} runtime={activeRuntime} selectedRow={selectedRow} processRows={processRows} onQuickFilter={quickFilter} metricHistory={metricHistory} />
       </main>
 
       <footer className="status-bar">
