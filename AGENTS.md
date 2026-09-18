@@ -191,6 +191,16 @@ The MCP layer is a **read-only evidence interface** over the live development de
 - MCP SDK imports must stay CLI-only and must not enter the React Native mobile bundle/runtime path.
 - Add regression coverage for app scoping, full-session search, context retrieval, error grouping, and dashboard-to-MCP data flow.
 
+## Release automation
+
+- `package.json#version` is the single release version source.
+- Every push to `master` runs `.github/workflows/release.yml`.
+- A successful workflow builds the dashboard, verifies the package tarball, attaches the `.tgz` and SHA-256 checksum to `v<package.version>`, and publishes the same tarball to npm only when npm credentials/trusted publishing are configured.
+- Never overwrite an existing GitHub release asset or republish an existing npm version. Bump `package.json#version` for a new release.
+- Keep `publishConfig.registry` pointed at the public npm registry unless the package distribution model intentionally changes.
+- Release CI must verify that `cli/dashboard/dist/index.html` and the MCP CLI files are present in the packed tarball.
+- NPM credentials must remain GitHub secrets/OIDC configuration; never commit tokens or generated auth files.
+
 ## Tests required before completion
 
 Run at minimum:
