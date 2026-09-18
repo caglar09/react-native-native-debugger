@@ -52,15 +52,34 @@ async function runMcp(args = {}) {
   const dashboardUrl = args.connect || `http://${args.host || '127.0.0.1'}:${args.port || 9876}`;
   const client = new DashboardClient(dashboardUrl, { timeoutMs: args.mcpTimeout || 5000 });
 
-  const server = new McpServer({
-    name: 'react-native-native-debugger',
-    version: pkg.version
-  });
+  const server = new McpServer(
+    {
+      name: 'react-native-native-debugger',
+      version: pkg.version
+    },
+    {
+      instructions: [
+        'This server exposes a live development-only React Native native debugging session.',
+        'Call native_debugger_status first.',
+        'Start log/error searches with scope="app"; expand to scope="all" only when OS, daemon, permission, or network-process correlation is useful.',
+        'Use stable log ids with get_native_log_context before concluding causality.',
+        'Treat captured logs and measured telemetry as evidence; clearly separate them from inference.',
+        'Never invent missing stack frames, network metadata, package attribution, or root causes.'
+      ].join(' ')
+    }
+  );
+
+  const readOnlyAnnotations = {
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: false
+  };
 
   server.registerTool(
     'native_debugger_status',
     {
       title: 'React Native Native Debugger Status',
+      annotations: readOnlyAnnotations,
       description: 'Use this first. Returns the connected app/device/session, collector health, captured-log statistics, and latest main-process runtime telemetry from the active React Native Native Debugger dashboard.',
       inputSchema: {}
     },
@@ -89,6 +108,7 @@ async function runMcp(args = {}) {
     'search_native_logs',
     {
       title: 'Search Native Logs',
+      annotations: readOnlyAnnotations,
       description: 'Search the complete captured native-log session. Default scope is the current app only. Use scope="all" when investigating related OS/daemon/network processes. Results include stable log ids that can be passed to get_native_log_context.',
       inputSchema: {
         scope: z.enum(['app', 'all']).optional().describe('app = current React Native app only; all = every captured process'),
@@ -126,6 +146,7 @@ async function runMcp(args = {}) {
     'get_native_log_context',
     {
       title: 'Get Native Log Context',
+      annotations: readOnlyAnnotations,
       description: 'Fetch chronological native log context around one previously returned log id. Use this after finding an error to understand what happened immediately before and after it.',
       inputSchema: {
         id: z.string().min(1).describe('Stable log id returned by search_native_logs or get_recent_native_errors'),
@@ -146,6 +167,7 @@ async function runMcp(args = {}) {
     'get_recent_native_errors',
     {
       title: 'Get Recent Native Error Groups',
+      annotations: readOnlyAnnotations,
       description: 'Group captured error/fatal/crash-signal logs by normalized signature. Use this to identify repeated native failures before drilling into a sample log id with get_native_log_context.',
       inputSchema: {
         scope: z.enum(['app', 'all']).optional(),
@@ -175,6 +197,7 @@ async function runMcp(args = {}) {
     'list_native_processes',
     {
       title: 'List Native Processes',
+      annotations: readOnlyAnnotations,
       description: 'Returns observed simulator/device processes with host-side CPU/RAM metrics when available, merged with captured log counts. Useful for finding the main app, noisy daemons, and processes correlated with errors.',
       inputSchema: {}
     },
@@ -206,6 +229,7 @@ async function runMcp(args = {}) {
     'get_runtime_telemetry',
     {
       title: 'Get Runtime Telemetry',
+      annotations: readOnlyAnnotations,
       description: 'Returns the latest real runtime/host telemetry for a process: memory, CPU, FPS, thread count, thermal state, battery, heap and traffic counters when that platform exposes them. Missing measurements remain absent/unavailable rather than being guessed.',
       inputSchema: {
         process: z.string().optional().describe('Process name. Omit to use the current app primary process.')
@@ -229,6 +253,7 @@ async function runMcp(args = {}) {
     'get_network_evidence',
     {
       title: 'Get Network Evidence',
+      annotations: readOnlyAnnotations,
       description: 'Search captured native logs for real CFNetwork/Network.framework/OkHttp/TLS/QUIC/socket evidence. This is log-derived evidence, not a synthetic HTTP inspector; URL, endpoint, TLS version or protocol appear only when emitted by the native stack.',
       inputSchema: {
         scope: z.enum(['app', 'all']).optional(),
