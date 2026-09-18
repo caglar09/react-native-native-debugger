@@ -43,7 +43,8 @@
     "unpatch": "node cli/index.js unpatch",
     "logs": "node cli/index.js logs",
     "dashboard:dev": "vite --config cli/dashboard/vite.config.mjs",
-    "dashboard:build": "vite build --config cli/dashboard/vite.config.mjs"
+    "dashboard:build": "vite build --config cli/dashboard/vite.config.mjs",
+    "prepack": "yarn dashboard:build"
   },
   "peerDependencies": {
     "react": "*",
