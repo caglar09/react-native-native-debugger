@@ -56,6 +56,7 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
   let sessionProvider = () => ({});
   let metricsProvider = () => ({ available: false });
   let processMetricsProvider = () => [];
+  let observabilityProvider = null;
 
   const server = http.createServer(async (req, res) => {
     const requestUrl = new URL(req.url, `http://${host}:${port}`);
@@ -123,6 +124,104 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
       }
     }
 
+    if (requestUrl.pathname === '/api/log-stats') {
+      try {
+        const result = observabilityProvider && typeof observabilityProvider.stats === 'function'
+          ? await Promise.resolve(observabilityProvider.stats())
+          : {};
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        return res.end(JSON.stringify(result || {}));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: error && error.message ? error.message : 'Could not read log stats' }));
+      }
+    }
+
+    if (requestUrl.pathname === '/api/logs') {
+      try {
+        const levels = requestUrl.searchParams.get('levels') || '';
+        const options = {
+          scope: requestUrl.searchParams.get('scope') || 'app',
+          text: requestUrl.searchParams.get('text') || '',
+          process: requestUrl.searchParams.get('process') || '',
+          package: requestUrl.searchParams.get('package') || '',
+          service: requestUrl.searchParams.get('service') || '',
+          subsystem: requestUrl.searchParams.get('subsystem') || '',
+          tag: requestUrl.searchParams.get('tag') || '',
+          levels,
+          networkOnly: requestUrl.searchParams.get('networkOnly') === 'true',
+          errorsOnly: requestUrl.searchParams.get('errorsOnly') === 'true',
+          lookbackMs: Number(requestUrl.searchParams.get('lookbackMs') || 0),
+          limit: Number(requestUrl.searchParams.get('limit') || 100),
+          order: requestUrl.searchParams.get('order') || 'desc'
+        };
+        const result = observabilityProvider && typeof observabilityProvider.searchLogs === 'function'
+          ? await Promise.resolve(observabilityProvider.searchLogs(options))
+          : { logs: [], totalMatches: 0, totalCaptured: 0 };
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        return res.end(JSON.stringify(result || {}));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: error && error.message ? error.message : 'Could not search logs' }));
+      }
+    }
+
+    if (requestUrl.pathname === '/api/log-context') {
+      try {
+        const id = requestUrl.searchParams.get('id') || '';
+        const before = Number(requestUrl.searchParams.get('before') || 20);
+        const after = Number(requestUrl.searchParams.get('after') || 20);
+        const result = observabilityProvider && typeof observabilityProvider.logContext === 'function'
+          ? await Promise.resolve(observabilityProvider.logContext(id, { before, after }))
+          : null;
+        if (!result) {
+          res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+          return res.end(JSON.stringify({ error: 'Log record not found', id }));
+        }
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        return res.end(JSON.stringify(result));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: error && error.message ? error.message : 'Could not read log context' }));
+      }
+    }
+
+    if (requestUrl.pathname === '/api/errors') {
+      try {
+        const options = {
+          scope: requestUrl.searchParams.get('scope') || 'app',
+          process: requestUrl.searchParams.get('process') || '',
+          package: requestUrl.searchParams.get('package') || '',
+          service: requestUrl.searchParams.get('service') || '',
+          text: requestUrl.searchParams.get('text') || '',
+          lookbackMs: Number(requestUrl.searchParams.get('lookbackMs') || 0),
+          limit: Number(requestUrl.searchParams.get('limit') || 20)
+        };
+        const result = observabilityProvider && typeof observabilityProvider.errorGroups === 'function'
+          ? await Promise.resolve(observabilityProvider.errorGroups(options))
+          : { groups: [], totalGroups: 0, totalErrorMatches: 0 };
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        return res.end(JSON.stringify(result || {}));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: error && error.message ? error.message : 'Could not group errors' }));
+      }
+    }
+
+    if (requestUrl.pathname === '/api/runtime') {
+      try {
+        const processName = requestUrl.searchParams.get('process') || '';
+        const result = observabilityProvider && typeof observabilityProvider.runtime === 'function'
+          ? await Promise.resolve(observabilityProvider.runtime(processName))
+          : null;
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        return res.end(JSON.stringify(result || { available: false }));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ available: false, error: error && error.message ? error.message : 'Could not read runtime telemetry' }));
+      }
+    }
+
     if (!fs.existsSync(INDEX_FILE)) return sendMissingBuild(res);
 
     const requested = safeStaticPath(requestUrl.pathname);
@@ -154,6 +253,7 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
         setSessionProvider(provider) { sessionProvider = typeof provider === 'function' ? provider : () => ({}); },
         setMetricsProvider(provider) { metricsProvider = typeof provider === 'function' ? provider : () => ({ available: false }); },
         setProcessMetricsProvider(provider) { processMetricsProvider = typeof provider === 'function' ? provider : () => []; },
+        setObservabilityProvider(provider) { observabilityProvider = provider && typeof provider === 'object' ? provider : null; },
         close: () => new Promise((done) => server.close(done))
       });
     });
