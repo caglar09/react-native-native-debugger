@@ -124,6 +124,19 @@ function startDashboard({ host = '127.0.0.1', port = 9876, open = true } = {}) {
       }
     }
 
+    if (requestUrl.pathname === '/api/clear' && req.method === 'POST') {
+      try {
+        if (observabilityProvider && typeof observabilityProvider.clear === 'function') {
+          await Promise.resolve(observabilityProvider.clear());
+        }
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        return res.end(JSON.stringify({ ok: true }));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: error && error.message ? error.message : 'Could not clear log session' }));
+      }
+    }
+
     if (requestUrl.pathname === '/api/log-stats') {
       try {
         const result = observabilityProvider && typeof observabilityProvider.stats === 'function'
