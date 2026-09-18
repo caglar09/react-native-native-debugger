@@ -228,6 +228,9 @@ class ReactNativeBlobUtilReq {
                     } catch (SocketException e) {
                     } catch (SocketTimeoutException e) {
                     } catch (Exception ex) {
+                        if (originalResponse != null) {
+                            originalResponse.close();
+                        }
 
                 public void onFailure(@NonNull Call call, @NonNull IOException e) {
 
