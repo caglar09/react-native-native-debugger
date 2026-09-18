@@ -64,17 +64,58 @@ const PanelCard = memo(function PanelCard({ title, children, className = '' }) {
   return <section className={`panel-card ${className}`}><div className="panel-title">{title}</div>{children}</section>;
 });
 
-const FacetSelect = memo(function FacetSelect({ value, onChange, label, values }) {
+const SearchableFacet = memo(function SearchableFacet({ value, onChange, label, values }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (event) => { if (!ref.current?.contains(event.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const normalized = query.trim().toLowerCase();
+  const filtered = normalized
+    ? values.filter((item) => String(item).toLowerCase().includes(normalized))
+    : values;
+
   return (
-    <select value={value} onChange={(event) => onChange(event.target.value)}>
-      <option value="">{label}</option>
-      {values.map((item) => <option key={item} value={item}>{item}</option>)}
-    </select>
+    <div className="facet-picker" ref={ref}>
+      <button type="button" onClick={() => setOpen((current) => !current)} title={value || label}>
+        {value || label}
+      </button>
+      {open && (
+        <div className="facet-menu">
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={`Search ${label.replace(/^All /, '').toLowerCase()}…`}
+          />
+          <button className="facet-all" type="button" onClick={() => { onChange(''); setOpen(false); }}>All</button>
+          <div className="facet-options">
+            {filtered.map((item) => (
+              <button
+                type="button"
+                className={value === item ? 'facet-option selected' : 'facet-option'}
+                key={item}
+                onClick={() => { onChange(item); setOpen(false); }}
+              >
+                {item}
+              </button>
+            ))}
+            {!filtered.length && <div className="process-empty">No matches.</div>}
+          </div>
+        </div>
+      )}
+    </div>
   );
 });
 
 const ProcessPicker = memo(function ProcessPicker({ values, selected, onChange }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const ref = useRef(null);
   useEffect(() => {
     const handler = (event) => { if (!ref.current?.contains(event.target)) setOpen(false); };
@@ -87,6 +128,10 @@ const ProcessPicker = memo(function ProcessPicker({ values, selected, onChange }
     if (next.has(name)) next.delete(name); else next.add(name);
     onChange(next);
   };
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredValues = normalizedQuery
+    ? values.filter((name) => String(name).toLowerCase().includes(normalizedQuery))
+    : values;
 
   return (
     <div className="process-picker" ref={ref}>
@@ -96,8 +141,9 @@ const ProcessPicker = memo(function ProcessPicker({ values, selected, onChange }
       {open && (
         <div className="process-menu">
           <div className="process-menu-head"><strong>Processes</strong><button type="button" onClick={() => onChange(new Set())}>All</button></div>
-          {!values.length && <div className="process-empty">No process information yet.</div>}
-          {values.map((name) => (
+          <input className="facet-search" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search processes…" />
+          {!filteredValues.length && <div className="process-empty">{values.length ? 'No matches.' : 'No process information yet.'}</div>}
+          {filteredValues.map((name) => (
             <label key={name} className="process-option">
               <input type="checkbox" checked={selected.has(name)} onChange={() => toggle(name)} />
               <span>{name}</span>
@@ -141,9 +187,12 @@ const Filters = memo(function Filters({ filters, setFilters, limit, setLimit, sp
     <div className="filters-shell">
       <div className="filters">
         <ProcessPicker values={facets.processes} selected={filters.processes} onChange={(processes) => setFilters((current) => ({ ...current, processes }))} />
-        <FacetSelect label="All levels" values={facets.levels} value={filters.level} onChange={(level) => setFilters((current) => ({ ...current, level }))} />
-        <FacetSelect label="All packages" values={facets.packages} value={filters.package} onChange={(pkg) => setFilters((current) => ({ ...current, package: pkg }))} />
-        <FacetSelect label="All services" values={facets.services} value={filters.service} onChange={(service) => setFilters((current) => ({ ...current, service }))} />
+        <select value={filters.level} onChange={(event) => setFilters((current) => ({ ...current, level: event.target.value }))}>
+          <option value="">All levels</option>
+          {facets.levels.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+        <SearchableFacet label="All packages" values={facets.packages} value={filters.package} onChange={(pkg) => setFilters((current) => ({ ...current, package: pkg }))} />
+        <SearchableFacet label="All services" values={facets.services} value={filters.service} onChange={(service) => setFilters((current) => ({ ...current, service }))} />
         <select value={limit} onChange={(event) => setLimit(Number(event.target.value))}>{LIMITS.map((value) => <option key={value} value={value}>{value} logs</option>)}</select>
         <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>{SPEEDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
         <input value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search message, class, file, subsystem, package…" />
