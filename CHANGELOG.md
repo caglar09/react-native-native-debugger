@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0-observability.3
+
+- Fixed iOS Simulator CPU/RAM sampling by resolving the simulator app PID first and sampling the matching host macOS process with `ps`.
+- Added a simulator-runtime `ps` fallback when host sampling is unavailable.
+- Automatically resolves the simulator app executable from the bundle id and `CFBundleExecutable`, so performance metrics no longer depend on `--process` or waiting for React Native logs to identify the app process.
+- Dashboard performance cards now show the metric source and an explicit reason when sampling is unavailable.
+- Added regression coverage for host `ps` RSS/CPU output parsing.
+
+# Changelog
+
 ## 0.7.0-observability.2
 
 - Fixed Android logcat parsing for tags that themselves contain colons, including React Native's `unknown:BridgelessReactContext` form.
