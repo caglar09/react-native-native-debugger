@@ -2,7 +2,7 @@
 
 const { startDashboard } = require('./dashboard');
 const { startAndroidCollector, startIosSimulatorCollector, startIosDeviceCollector } = require('./collectors');
-const { createSessionInfo, sampleMetrics } = require('./telemetry');
+const { createSessionInfo, sampleMetrics, sampleProcessMatrix } = require('./telemetry');
 
 async function runLogs(args) {
   const dashboard = await startDashboard({ host: args.host, port: args.port, open: !args.noOpen });
@@ -39,6 +39,20 @@ async function runLogs(args) {
     device: args.device,
     processName: processName || args.process || collector.app || null
   }));
+  dashboard.setProcessMetricsProvider(async () => {
+    const session = await createSessionInfo({
+      collector,
+      root: args.root,
+      app: args.app,
+      device: args.device,
+      processName: args.process || collector.app || null
+    });
+    return sampleProcessMatrix({
+      collector,
+      device: args.device,
+      mainProcess: session?.app?.primaryProcess || args.process || collector.app || null
+    });
+  });
 
   console.log('React Native Native Debugger — native logs');
   console.log(`Dashboard: ${dashboard.url}`);
