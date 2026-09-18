@@ -71,6 +71,16 @@ function getAndroidDeviceInfo(serial) {
   };
 }
 
+function getIosSimulatorAppExecutable(target = 'booted', bundleId) {
+  if (!bundleId) return null;
+  const appPath = run('xcrun', ['simctl', 'get_app_container', target, bundleId, 'app']);
+  if (!appPath) return null;
+  const plist = path.join(appPath, 'Info.plist');
+  if (!fs.existsSync(plist)) return null;
+  const executable = run('/usr/bin/plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', plist]);
+  return executable || null;
+}
+
 function getIosSimulatorDeviceInfo(target = 'booted') {
   let device = null;
   try {
@@ -204,6 +214,9 @@ async function createSessionInfo({ collector, root, app, device, processName }) 
   const appId = collector.platform === 'android'
     ? (app || readApplicationId(root))
     : detectIosBundleId(root);
+  const simulatorProcess = collector.platform === 'ios'
+    ? getIosSimulatorAppExecutable(collector.target || device || 'booted', appId)
+    : null;
 
   return {
     device: deviceInfo,
@@ -213,7 +226,7 @@ async function createSessionInfo({ collector, root, app, device, processName }) 
       bundleId: appId || null,
       reactNativeVersion: pkg.dependencies?.['react-native'] || pkg.devDependencies?.['react-native'] || null,
       reactVersion: pkg.dependencies?.react || pkg.devDependencies?.react || null,
-      primaryProcess: processName || collector.process || collector.app || null,
+      primaryProcess: processName || collector.process || collector.app || simulatorProcess || null,
       debug: true
     },
     metro,
@@ -238,5 +251,6 @@ module.exports = {
   sampleAndroidProcess,
   sampleIosSimulatorProcess,
   findIosSimulatorProcess,
-  parseHostPsSample
+  parseHostPsSample,
+  getIosSimulatorAppExecutable
 };
