@@ -27,7 +27,7 @@ export class NativeLogStore {
     this.processes = new Set();
     this.facetSnapshot = { levels: [], packages: [], services: [], processes: [] };
     this.levelCounts = new Map();
-    this.recentEventTimes = [];
+    this.rateBuckets = new Map();
   }
 
   subscribeLogs = (listener) => {
@@ -100,10 +100,11 @@ export class NativeLogStore {
     this.buffer.unshift(event);
     const level = levelName(event);
     this.levelCounts.set(level, (this.levelCounts.get(level) || 0) + 1);
-    const now = Number(event.receivedAt || Date.now());
-    this.recentEventTimes.push(now);
-    const cutoff = now - 60000;
-    while (this.recentEventTimes.length && this.recentEventTimes[0] < cutoff) this.recentEventTimes.shift();
+    const second = Math.floor(Number(event.receivedAt || Date.now()) / 1000);
+    this.rateBuckets.set(second, (this.rateBuckets.get(second) || 0) + 1);
+    for (const key of this.rateBuckets.keys()) {
+      if (key < second - 60) this.rateBuckets.delete(key);
+    }
     this.updateFacets(event);
     this.scheduleLogs();
   }
@@ -149,7 +150,7 @@ export class NativeLogStore {
     this.services = new Set();
     this.processes = new Set();
     this.levelCounts = new Map();
-    this.recentEventTimes = [];
+    this.rateBuckets = new Map();
     this.emitFacets();
     this.emitLogs();
   }
@@ -163,11 +164,10 @@ export class NativeLogStore {
   }
 
   getStats(now = Date.now()) {
-    const tenSecondCutoff = now - 10000;
+    const currentSecond = Math.floor(now / 1000);
     let recentTenSeconds = 0;
-    for (let i = this.recentEventTimes.length - 1; i >= 0; i -= 1) {
-      if (this.recentEventTimes[i] < tenSecondCutoff) break;
-      recentTenSeconds += 1;
+    for (let second = currentSecond - 9; second <= currentSecond; second += 1) {
+      recentTenSeconds += this.rateBuckets.get(second) || 0;
     }
     return {
       total: this.buffer.length,
