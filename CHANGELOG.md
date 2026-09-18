@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0-observability.2
+
+- Fixed Android logcat parsing for tags that themselves contain colons, including React Native's `unknown:BridgelessReactContext` form.
+- Android collector now refreshes a PID-to-process map and annotates each log with its actual process name before source classification.
+- Reclassification now happens after stack/source-location extraction, improving React Native attribution from JVM stack frames.
+- Unknown package/service labels now fall back to resolved process/tag metadata instead of masking useful Android source information.
+- Buffered dashboard events are retroactively enriched when process discovery learns a PID mapping, so process filters work for records received just before discovery.
+- Process, Package, and Service filters now include built-in search fields for large facet sets.
+- Added regression coverage for colon-bearing Android tags, process fallback attribution, and searchable dashboard facets.
+
 ## 0.7.0-observability.0
 
 - Redesigned the React dashboard into a three-column runtime observability console with device/app/session context, the existing virtualized log explorer, and live performance panels.
